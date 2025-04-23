@@ -79,8 +79,10 @@ class StatsManager{
         this.frameTimeBuffer = new CircularBuffer(16);
         this.fpsHistory = new Array(50).fill(0);
 
-        this.memoryInfoSupported = perfomance?.memory?.totalJSHeapSize !== undefined;
-        this.memoryInBytes = 0;
+        this.memoryInfoSupported = performance?.memory?.totalJSHeapSize !== undefined;
+        if(this.memoryInfoSupported && performance.memory){
+            this.memoryInBytes = performance.memory.usedJSHeapSize;
+        }
         this.bytesToMegabytes = 1_000_000;
 
         this.uiElement = document.createElement('div');
@@ -103,42 +105,45 @@ class StatsManager{
         this.timers.push([name, new StatsTimer()]);
     }
 
-    startFrame(){
+    startFrame() {
         this.frameCount++;
         this.timers.forEach(([_, timer]) => timer.reset());
-
-        if(this.frameCount > 0){
-            this.frameTimer.stop();
-            this.frameTimeBuffer.push(this.frameTimer.getElapsedTime());
-
-            const totalFrames = this.frameTimeBuffer.size();
-            let totalElapsed = 0;
-
-            for(let i = 0; i < totalFrames; i++){
-                totalElapsed += this.frameTimeBuffer.get(i);
-            }
-
-            this.framesPerSecond = (totalFrames / totalElapsed) * 100;
-            this.fpsHistory[this.frameCount % this.fpsHistory.length] = Math.round(this.framesPerSecond);
-
-            this.frameTimer.start();
+    
+        this.frameTimer.stop();
+        const elapsed = this.frameTimer.getElapsedTime(); 
+        this.frameTimeBuffer.push(elapsed);
+    
+        const totalFrames = this.frameTimeBuffer.size();
+        let totalElapsed = 0;
+        for(let i = 0; i < totalFrames; i++){
+            totalElapsed += this.frameTimeBuffer.get(i); 
         }
-
+    
+        if(totalElapsed > 0){
+            this.framesPerSecond = (totalFrames / totalElapsed) * 1000;
+            this.fpsHistory[this.frameCount % this.fpsHistory.length] = Math.round(this.framesPerSecond);
+        }
+    
+        this.frameTimer.start();
+    
         if(this.memoryInfoSupported){
-            this.memoryBytes = perfomance.memory.usedJSHeapSize;
+            this.memoryInBytes = performance.memory.usedJSHeapSize;
         }
     }
+    
 
     getTimer(name){
         return this.timers.find(([timerName]) => timerName === name);
     }
 
     startTimer(name){
-        this.getTimer(name)[1].start();
+        const timer = this.getTimer(name);
+        if(timer) timer[1].start();
     }
 
     stopTimer(name){
-        this.getTimer(name)[1].stop();
+        const timer = this.getTimer(name);
+        if(timer) timer[1].stop();
     }
 
     getInfoString(){

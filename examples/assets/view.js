@@ -39,8 +39,8 @@ export class ARPoseRendererView{
         render();
     }
 
-    updateCameraPose(){
-        this.applyPose(postMessage, this.camera.quaternion, this.camera.position);
+    updateCameraPose(pose){
+        this.applyPose(pose, this.camera.quaternion, this.camera.position);
         this.object.visible = true;
     }
 
@@ -158,11 +158,11 @@ export class ARTrackingRenderer{
     updateCameraPose(pose){
         this.applyPose(pose, this.camera.quaternion, this.camera.position);
         this.renderer.render(this.scene, this.camera);
-        //this.body.classList.add('tracking');
+        this.body.classList.add('tracking');
     }
 
     lostCamera(){
-        //this.body.classList.remove('tracking');
+        this.body.classList.remove('tracking');
     }
 
     createObjectWithPose(pose, scale = 1.0){

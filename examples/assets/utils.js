@@ -82,7 +82,7 @@ const createCanvasElement = (width, height) => {
 };
 
 export class Camera{
-    static async initialize(constraints = null){
+    static async Initialize(constraints = null){
         if('facingMode' in constraints && 'deviceId' in constraints){
             throw new Error('Cannot used "deviceId" and "facingMode" together.');
         }
@@ -120,7 +120,7 @@ export class Camera{
                         videoElement.width = actualWidth;
                         videoElement.height = actualHeight;
                         videoElement.play();
-
+                        
                         resolve(new Camera(videoElement));
                     };
                 };
