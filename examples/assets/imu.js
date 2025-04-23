@@ -1,4 +1,4 @@
-import { deg2rad, getScreenOrientation, isIOS } from './utils.js';
+import { deg2rad, getCurrentScreenOrientation, isRunningOniOS } from './utils.js';
 
 class Quaternion{
     static fromAxisAngle(axisX = 0, axisY = 0, axisZ = 0, angleRadians = 0){
@@ -138,7 +138,7 @@ class IMUDevice{
         this.motionSamples = [];
 
         this.orientationQuaternion = { x: 1, y: 0, z: 0, w: 1 };
-        this.referenceTransform = isIOS()
+        this.referenceTransform = isRunningOniOS()
             ? Quaternion.fromAxisAngle(1, 0, 0, -Math.PI / 2)
             : Quaternion.fromAxisAngle(0, 1, 0, Math.PI / 2);
         
@@ -178,7 +178,7 @@ class IMUDevice{
             };
 
             const onScreenOrientationChange = () => {
-                this.deviceOrientation = getScreenOrientation();
+                this.deviceOrientation = getCurrentScreenOrientation();
                 if(this.deviceOrientation === 'landscape_left'){
                     this.deviceOrientationAngle = 90;
                 }else if(this.deviceOrientation === 'landscape_right'){
