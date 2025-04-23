@@ -1,18 +1,26 @@
+# Ignore all hidden files/folders
 .*
-!.babelrc
+
+# Allow essential dotfiles
 !.gitignore
+!.babelrc
 !.prettierrc
 !.editorconfig
 !.eslintrc.json
-!.prettierrc
 !.eslintignore
 !.buildpacks
 
-node_modules
-__pycache__
+# Common dependency & cache folders
+node_modules/
+__pycache__/
 
-build/*
-cmake-build-debug/*
+# Ignore common build folders (anywhere)
+**/build/
+**/build-*/         # e.g. build-debug, build-release
+**/dist/
+**/out/
+**/cmake-build-*/
 
+# IDE-specific files
 .idea/
 *.iml
