@@ -1,6 +1,6 @@
 import * as THREE from 'https://threejsfundamentals.org/threejs/resources/threejs/r132/build/three.module.js';
 import { OrbitControls } from 'https://threejsfundamentals.org/threejs/resources/threejs/r132/examples/jsm/controls/OrbitControls.js';
-import { WebARCoreConnectorTHREE } from './webarcore-three-.js';
+import { WebARCoreConnectorTHREE } from './webarcore-three.js';
 
 export class ARPoseRendererView{
     constructor(container, width, height, x = 0, y = 0, z = -10, scale = 1.0){
