@@ -145,7 +145,7 @@ class IMUDevice{
             const onOrientationChange = (event) => {
                 const { beta, gamma, alpha } = event;
                 const pitch = beta * deg2rad;
-                const roll = gamma = deg2rad;
+                const roll = gamma * deg2rad;
                 const yaw = alpha * deg2rad;
                 
                 const calculatedOrientation = Quaternion.multiplyQuaternions(
@@ -160,21 +160,22 @@ class IMUDevice{
             };
 
             const onMotionEvent = (event) => {
-                const { beta, gamma, alpha, acceleration } = event.rotationRate;
-                const angularX = beta * deg2rad;
-                const angularY = gamma * deg2rad;
-                const angularZ = alpha * deg2rad;
-
-                const { x, y, z } = acceleration;
-                this.motionSamples.push({
-                    timestamp: Date.now(),
-                    gx: angularX,
-                    gy: angularY,
-                    gz: angularZ,
-                    ax: x,
-                    ay: y,
-                    az: z
-                });
+                const { rotationRate, acceleration } = event;
+                if(rotationRate && acceleration){
+                    const angularX = rotationRate.beta * deg2rad;
+                    const angularY = rotationRate.gamma * deg2rad;
+                    const angularZ = rotationRate.alpha * deg2rad;
+                    const { x, y, z } = event.acceleration;
+                    this.motionSamples.push({
+                        timestamp: Date.now(),
+                        gx: angularX,
+                        gy: angularY,
+                        gz: angularZ,
+                        ax: x,
+                        ay: y,
+                        az: z
+                    });
+                }
             };
 
             const onScreenOrientationChange = () => {

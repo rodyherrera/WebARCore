@@ -103,7 +103,7 @@ export class ARGroundProjectorView{
 
     addObjectAt(x, y, scale = 1.0){
         const el = this.renderer.domElement;
-        const coord = new THREE.Vector2((x / el.offsetWidth) * 2 - 1, -(y / el.offsetWidth) * 2 + 1);
+        const coord = new THREE.Vector2((x / el.offsetWidth) * 2 - 1, -(y / el.offsetHeight) * 2 + 1);
         this.raycaster.setFromCamera(coord, this.camera);
 
         const intersections = this.raycaster.intersectObjects([this.ground]);
