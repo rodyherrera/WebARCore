@@ -1,5 +1,6 @@
 #include "optimizer.hpp"
 #include "ceres_parametrization.hpp"
+#include <thread>
 
 void Optimizer::localBA(Frame &newFrame)
 {
@@ -252,7 +253,7 @@ void Optimizer::localBA(Frame &newFrame)
     options.linear_solver_ordering.reset(ordering);
     options.linear_solver_type = ceres::SPARSE_SCHUR;
     options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;
-    options.num_threads = 1;
+    options.num_threads = std::thread::hardware_concurrency();
     options.max_num_iterations = 5;
     options.function_tolerance = 0.001;
     options.max_solver_time_in_seconds = 0.01; //10ms

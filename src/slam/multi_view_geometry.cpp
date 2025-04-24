@@ -8,6 +8,7 @@
 #include <opengv/sac_problems/absolute_pose/AbsolutePoseSacProblem.hpp>
 #include <opengv/relative_pose/CentralRelativeAdapter.hpp>
 #include <opengv/sac_problems/relative_pose/CentralRelativePoseSacProblem.hpp>
+#include <thread>
 
 Eigen::Vector3d MultiViewGeometry::triangulate(const Sophus::SE3d &Tlr, const Eigen::Vector3d &bvl, const Eigen::Vector3d &bvr)
 {
@@ -180,7 +181,7 @@ bool MultiViewGeometry::ceresPnP(
     ceres::Solver::Options options;
     options.linear_solver_type = ceres::DENSE_QR; // DENSE_QR, DENSE_SCHUR or SPARSE_NORMAL_CHOLESKY
     options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;
-    options.num_threads = 1;
+    options.num_threads = std::thread::hardware_concurrency();
     options.max_num_iterations = maxIterations;
     options.max_solver_time_in_seconds = 0.005;
     options.function_tolerance = 1.e-3;

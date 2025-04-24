@@ -1,5 +1,7 @@
 source ~/emsdk/emsdk_env.sh
-mkdir build
-cd build/
-emcmake cmake ..
-emmake make install
+
+emcmake cmake -B build -G Ninja
+
+cmake --build build --parallel
+
+cmake --install build

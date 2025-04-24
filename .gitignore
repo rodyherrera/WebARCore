@@ -9,6 +9,7 @@
 !.eslintrc.json
 !.eslintignore
 !.buildpacks
+package-lock.json
 
 # Common dependency & cache folders
 node_modules/
@@ -17,9 +18,11 @@ __pycache__/
 # Ignore common build folders (anywhere)
 **/build/
 **/build-*/         # e.g. build-debug, build-release
+**/build_*/
 **/dist/
 **/out/
 **/cmake-build-*/
+**/certs/
 
 # IDE-specific files
 .idea/

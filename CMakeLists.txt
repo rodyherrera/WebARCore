@@ -30,7 +30,7 @@ if (NOT DIST_DIR)
     set(DIST_DIR ${CMAKE_BINARY_DIR}/../../../dist)
 endif (NOT DIST_DIR)
 
-set(LIBS_BUILD_FOLDER "./libs/build")
+set(LIBS_BUILD_FOLDER "./libs/build_threads/")
 
 include_directories(${LIBS_BUILD_FOLDER}/../opencv/modules/calib3d/include/)
 include_directories(${LIBS_BUILD_FOLDER}/../opencv/modules/core/include/)
@@ -76,8 +76,8 @@ file(GLOB LIB_CERES
 file(GLOB LIB_OPENGV
         "${LIBS_BUILD_FOLDER}/opengv/lib/libopengv.a")
 
-# hide warnings
-set_source_files_properties(${SRC_FILES} PROPERTIES COMPILE_FLAGS "-w")
+        # Add pthread support and hide warnings
+set_source_files_properties(${SRC_FILES} PROPERTIES COMPILE_FLAGS "-w -pthread")
 
 # Link third party libraries
 target_link_libraries(${PROJECT_NAME}
@@ -118,29 +118,31 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
 else ()
     message(STATUS "Compile in RELEASE mode")
     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "\
-      -s EXPORT_NAME='WebARCoreWASM' \
-      -s ENVIRONMENT=web,worker \
-      -s INITIAL_MEMORY=256MB \
-      -s ALLOW_MEMORY_GROWTH=1 \
-      -s ALLOW_TABLE_GROWTH=1 \
-      -s MODULARIZE=1 \
-      -s EXPORT_ES6=1 \
-      -s EXPORT_ALL=1 \
-      -s SINGLE_FILE=1 \
-      -s ASSERTIONS=0 \
-      -s DYLINK_DEBUG=0 \
-      -s EXPORTED_FUNCTIONS=['_malloc'] \
-      -s ERROR_ON_UNDEFINED_SYMBOLS=0 \
-      -s DISABLE_EXCEPTION_CATCHING=0 \
-      -s USE_ZLIB=1 \
-      -std=c++17 \
-      -msimd128 \
-      -O3 \
-      -Oz \
-      --extern-post-js ../src/system.js \
-      --no-entry \
-      --no-check-features \
-      --bind")
+        -s EXPORT_NAME='WebARCoreWASM' \
+        -s ENVIRONMENT=web,worker \
+        -s USE_PTHREADS=1 \
+        -s PTHREAD_POOL_SIZE=4 \
+        -s INITIAL_MEMORY=256MB \
+        -s ALLOW_MEMORY_GROWTH=1 \
+        -s ALLOW_TABLE_GROWTH=1 \
+        -s MODULARIZE=1 \
+        -s EXPORT_ES6=1 \
+        -s EXPORT_ALL=1 \
+        -s SINGLE_FILE=1 \
+        -s ASSERTIONS=0 \
+        -s DYLINK_DEBUG=0 \
+        -s EXPORTED_FUNCTIONS=['_malloc'] \
+        -s ERROR_ON_UNDEFINED_SYMBOLS=0 \
+        -s DISABLE_EXCEPTION_CATCHING=0 \
+        -s USE_ZLIB=1 \
+        -std=c++17 \
+        -msimd128 \
+        -O3 \
+        -Oz \
+        --extern-post-js ../src/system.js \
+        --no-entry \
+        --no-check-features \
+        --bind")
 endif ()
 unset(CMAKE_BUILD_TYPE CACHE)
 
