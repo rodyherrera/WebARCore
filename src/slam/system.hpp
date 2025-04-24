@@ -30,6 +30,7 @@ public:
     void reset();
 
     int findCameraPoseWithIMU(int imageRGBADataPtr, int imuDataPtr, int posePtr);
+    cv::Mat fastPlaneDetection(const std::vector<Eigen::Vector3d>& points, const Sophus::SE3d& Twc, int numIterations);
 
     int findCameraPose(int imageRGBADataPtr, int posePtr);
 
@@ -38,9 +39,8 @@ public:
     int getFramePoints(int pointsPtr);
 
 private:
-    cv::Mat processPlane(std::vector<Eigen::Vector3d> mapPoints, Sophus::SE3d Twc, int numIterations = 50);
-
-    int processCameraPose(cv::Mat &image, double timestamp);
+    int processCameraPose(cv::Mat &image, uint64_t timestamp);
+    uint64_t getTimestamp();
 
     std::shared_ptr<State> state_;
     std::shared_ptr<Frame> currFrame_;
