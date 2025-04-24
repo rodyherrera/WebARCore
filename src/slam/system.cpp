@@ -1,189 +1,437 @@
-#include "system.hpp"
+#include "visual_frontend.hpp"
 #include <iostream>
-#include <numeric>
-#include <random>
+#include <algorithm>
 
-System::System() = default;
-System::~System() = default;
-
-void System::configure(int imageWidth, int imageHeight, double fx, double fy, double cx, double cy, double k1, double k2, double p1, double p2){
-    state_ = std::make_shared<State>(imageWidth, imageHeight, 40);
-    state_->debug_ = false;
-    state_->claheEnabled_ = false;
-    state_->mapKeyframeFilteringRatio_ = 0.95;
-    state_->p3pEnabled_ = true;
-
-    cameraCalibration_ = std::make_shared<CameraCalibration>(fx, fy, cx, cy, k1, k2, p1, p2, imageWidth, imageHeight, 20);
-    currFrame_ = std::make_shared<Frame>(cameraCalibration_, state_->frameMaxCellSize_);
-
-    featureExtractor_ = std::make_shared<FeatureExtractor>(state_->extractorMaxQuality_);
-    featureTracker_ = std::make_shared<FeatureTracker>(state_->trackerMaxIterations_, state_->trackerMaxPxPrecision_);
-
-    mapManager_ = std::make_shared<MapManager>(state_, currFrame_, featureExtractor_);
-    mapper_ = std::make_shared<Mapper>(state_, mapManager_, currFrame_);
-    visualFrontend_ = std::make_unique<VisualFrontend>(state_, currFrame_, mapManager_, mapper_, featureTracker_);
+VisualFrontend::VisualFrontend(std::shared_ptr<State> state,
+                               std::shared_ptr<Frame> frame,
+                               std::shared_ptr<MapManager> mapManager,
+                               std::shared_ptr<Mapper> mapper,
+                               std::shared_ptr<FeatureTracker> featureTracker)
+    : state_(state), currFrame_(frame), mapManager_(mapManager), mapper_(mapper), featureTracker_(featureTracker){
+    cv::Size gridSize(state_->imgWidth_ / state_->claheTileSize_, state_->imgHeight_ / state_->claheTileSize_);
+    clahe_ = cv::createCLAHE(state_->claheContrastLimit_, gridSize);
+    poseFailedCounter_ = 0;
+    p3pReq_ = false;
 }
 
-void System::reset(){
+void VisualFrontend::track(cv::Mat &image, double timestamp){
+    bool isKeyFrameRequired = process(image, timestamp);
+    if(isKeyFrameRequired){
+        mapManager_->createKeyframe(currImage_, image);
+        if(!state_->slamResetRequested_ && state_->slamReadyForInit_){
+            Keyframe kf(currFrame_->keyframeId_, image);
+            mapper_->processNewKeyframe(kf);
+        }
+    }
+}
+
+bool VisualFrontend::process(cv::Mat &image, double timestamp){
+    preprocessImage(image);
+    if(currFrame_->id_ == 0){
+        return true;
+    }
+    Sophus::SE3d Twc = currFrame_->getTwc();
+    motionModel_.applyMotionModel(Twc, timestamp);
+    currFrame_->setTwc(Twc);
+    kltTrackingFromMotionPrior();
+    if(!state_->slamReadyForInit_){
+        if(currFrame_->numKeypoints2d_ < 50){
+            state_->slamResetRequested_ = true;
+            return false;
+        }
+        if(checkReadyForInit()){
+            state_->slamReadyForInit_ = true;
+            return true;
+        }
+        if(state_->debug_){
+            std::cout << "- [Visual-Frontend]: Not ready for initialization\n";
+        }
+        return false;
+    }else{
+        bool success = computePose();
+        if(!success){
+            if(state_->debug_){
+                std::cout << "- [Visual-Frontend]: Failed to compute pose num times: " << poseFailedCounter_ << "\n";
+            }
+            poseFailedCounter_++;
+            if(poseFailedCounter_ > 3){
+                state_->slamResetRequested_ = true;
+                return false;
+            }
+        }
+        motionModel_.updateMotionModel(currFrame_->Twc_, timestamp);
+        return checkNewKeyframeRequired();
+    }
+}
+
+void VisualFrontend::kltTrackingFromMotionPrior(){
+    std::vector<int> v3dkpids, vkpids;
+    std::vector<cv::Point2f> v3dkps, v3dpriors, vkps, vpriors;
+    std::vector<bool> vkpis3d;
+    v3dkpids.reserve(currFrame_->numKeypoints3d_);
+    v3dkps.reserve(currFrame_->numKeypoints3d_);
+    v3dpriors.reserve(currFrame_->numKeypoints3d_);
+    vkpids.reserve(currFrame_->numKeypoints_);
+    vkps.reserve(currFrame_->numKeypoints_);
+    vpriors.reserve(currFrame_->numKeypoints_);
+    vkpis3d.reserve(currFrame_->numKeypoints_);
+
+    for(const auto &it : currFrame_->mapKeypoints_){
+        const auto &keypoint = it.second;
+        if(state_->kltUsePrior_ && keypoint.is3d_){
+            auto mapPointsIt = mapManager_->mapMapPoints_.find(keypoint.keypointId_);
+            if(mapPointsIt != mapManager_->mapMapPoints_.end()){
+                auto projpx = currFrame_->projWorldToImageDist(mapPointsIt->second->getPoint());
+                if(currFrame_->isInImage(projpx)){
+                    v3dkps.push_back(keypoint.px_);
+                    v3dpriors.push_back(projpx);
+                    v3dkpids.push_back(keypoint.keypointId_);
+                    vkpis3d.push_back(true);
+                    continue;
+                }
+            }
+        }
+        vkpids.push_back(keypoint.keypointId_);
+        vkps.push_back(keypoint.px_);
+        vpriors.push_back(keypoint.px_);
+    }
+
+    if(state_->kltUsePrior_ && !v3dpriors.empty()){
+        std::vector<bool> keypointStatus;
+        featureTracker_->fbKltTracking(
+            prevPyramid_, currPyramid_, state_->kltWinSizeWH_, 1, state_->kltError_, state_->kltMaxFbDistance_,
+            v3dkps, v3dpriors, keypointStatus
+        );
+        size_t numGood = 0, numKeypoints = v3dkps.size();
+        for(size_t i = 0; i < numKeypoints; i++){
+            if(keypointStatus[i]){
+                currFrame_->updateKeypoint(v3dkpids[i], v3dpriors[i]);
+                numGood++;
+            }else{
+                vkpids.push_back(v3dkpids[i]);
+                vkps.push_back(v3dkps[i]);
+                vpriors.push_back(v3dpriors[i]);
+            }
+        }
+        if(state_->debug_){
+            std::cout << "- [Visual-Frontend]: FromMotionPrior - w. priors : " << numGood << " out of " << numKeypoints << " kps tracked\n";
+        }
+        if(numGood < 0.33 * numKeypoints){
+            p3pReq_ = true;
+            vpriors = vkps;
+        }
+    }
+
+    if(!vkps.empty()){
+        std::vector<bool> keypointStatus;
+        featureTracker_->fbKltTracking(
+            prevPyramid_, currPyramid_, state_->kltWinSizeWH_, state_->kltPyramidLevels_, state_->kltError_, state_->kltMaxFbDistance_,
+            vkps, vpriors, keypointStatus
+        );
+        size_t numGood = 0, numKeypoints = vkps.size();
+        for(size_t i = 0; i < numKeypoints; i++){
+            if(keypointStatus[i]){
+                currFrame_->updateKeypoint(vkpids[i], vpriors[i]);
+                numGood++;
+            }else{
+                mapManager_->removeObsFromCurrFrameById(vkpids[i]);
+            }
+        }
+        if(state_->debug_){
+            std::cout << "- [Visual-Frontend]: FromMotionPrior - no prior : " << numGood << " out of " << numKeypoints << " kps tracked\n";
+        }
+    }
+}
+
+bool VisualFrontend::computePose(){
+    size_t num3dKeypoints = currFrame_->numKeypoints3d_;
+    if(num3dKeypoints < 4){
+        if(state_->debug_){
+            std::cout << "- [Visual-Frontend]: Pose - Not enough kps to compute P3P/PnP\n";
+        }
+        return false;
+    }
+
+    std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>> vbvs, vwpts;
+    std::vector<Eigen::Vector2d, Eigen::aligned_allocator<Eigen::Vector2d>> vkps;
+    std::vector<int> vkpids, outliersIndices;
+    vbvs.reserve(num3dKeypoints);
+    vwpts.reserve(num3dKeypoints);
+    vkpids.reserve(num3dKeypoints);
+    outliersIndices.reserve(num3dKeypoints);
+    vkps.reserve(num3dKeypoints);
+
+    bool doP3P = p3pReq_ || state_->p3pEnabled_;
+    for(const auto &it : currFrame_->mapKeypoints_){
+        if(!it.second.is3d_){
+            continue;
+        }
+        const auto &kp = it.second;
+        auto mapPointsIt = mapManager_->mapMapPoints_.find(kp.keypointId_);
+        if(mapPointsIt == mapManager_->mapMapPoints_.end() || mapPointsIt->second == nullptr){
+            continue;
+        }
+        if(doP3P){
+            vbvs.push_back(kp.bv_);
+        }
+        vkps.push_back(Eigen::Vector2d(kp.unpx_.x, kp.unpx_.y));
+        vwpts.push_back(mapPointsIt->second->getPoint());
+        vkpids.push_back(kp.keypointId_);
+    }
+
+    Sophus::SE3d Twc = currFrame_->getTwc();
+    bool doOptimize = false;
+    bool success = false;
+
+    if(doP3P){
+        success = MultiViewGeometry::p3pRansac(
+            vbvs, vwpts, state_->multiViewRansacNumIterations_, state_->multiViewRansacError_, doOptimize, state_->multiViewRandomEnabled_,
+            currFrame_->cameraCalibration_->fx_, currFrame_->cameraCalibration_->fy_, Twc, outliersIndices
+        );
+        if(state_->debug_){
+            std::cout << "- [Visual-Frontend]: Pose - P3P num outliers : " << outliersIndices.size() << "\n";
+        }
+        size_t numInliers = vwpts.size() - outliersIndices.size();
+        if(!success || numInliers < 5 || Twc.translation().array().isInf().any() || Twc.translation().array().isNaN().any()){
+            if(state_->debug_){
+                std::cout << "- [Visual-Frontend]: Pose - Not enough inliers for reliable pose est. Resetting keyframe state\n";
+            }
+            resetFrame();
+            return false;
+        }
+        currFrame_->setTwc(Twc);
+        int k = 0;
+        for(const auto &index : outliersIndices){
+            mapManager_->removeObsFromCurrFrameById(vkpids[index - k]);
+            vkps.erase(vkps.begin() + index - k);
+            vwpts.erase(vwpts.begin() + index - k);
+            vkpids.erase(vkpids.begin() + index - k);
+            k++;
+        }
+        outliersIndices.clear();
+    }
+
+    bool useRobust = true;
+    size_t maxIterations = 5;
+    success = MultiViewGeometry::ceresPnP(
+        vkps, vwpts, Twc, maxIterations, state_->robustCostThreshold_, useRobust, state_->robustCostRefineWithL2_,
+        currFrame_->cameraCalibration_->fx_, currFrame_->cameraCalibration_->fy_,
+        currFrame_->cameraCalibration_->cx_, currFrame_->cameraCalibration_->cy_, outliersIndices
+    );
+
+    size_t numInliers = vwpts.size() - outliersIndices.size();
     if(state_->debug_){
-        std::cout << "- [System]: Reset\n";
+        std::cout << "- [Visual-Frontend]: Pose - Ceres PnP outliers : " << outliersIndices.size() << ", inliers: " << numInliers << "\n";
     }
-    currFrame_->reset();
-    visualFrontend_->reset();
-    mapManager_->reset();
-    state_->reset();
-    prevTranslation_.setZero();
-}
-
-int System::findCameraPoseWithIMU(int imageRGBADataPtr, int imuDataPtr, int posePtr){
-    auto* imageData = reinterpret_cast<uint8_t*>(imageRGBADataPtr);
-    auto* imuData = reinterpret_cast<double*>(imuDataPtr);
-    auto* poseData = reinterpret_cast<float*>(posePtr);
-
-    cv::Mat imageRGBA(state_->imgHeight_, state_->imgWidth_, CV_8UC4, imageData);
-    cv::Mat gray;
-    cv::cvtColor(imageRGBA, gray, cv::COLOR_RGBA2GRAY);
-
-    Eigen::Quaterniond qimu(imuData[0], -imuData[1], imuData[2], imuData[3]);
-    Eigen::Matrix3d Rwc = qimu.toRotationMatrix().inverse();
-    Sophus::SE3d Twc(Rwc, Eigen::Vector3d::Zero());
-
-    int motionSampleSize = 7;
-    int status = processCameraPose(gray, getTimestamp());
-
-    if(status == 1){
-        Eigen::Vector3d t = currFrame_->getTwc().translation();
-        currTranslation_ += t - prevTranslation_;
-        prevTranslation_ = t;
-    }else{
-        prevTranslation_.setZero();
-    }
-
-    Twc.translation() = currTranslation_;
-    Utils::toPoseArray(Twc, poseData);
-    return 1;
-}
-
-int System::findCameraPose(int imageRGBADataPtr, int posePtr){
-    auto* imageData = reinterpret_cast<uint8_t*>(imageRGBADataPtr);
-    auto* poseData = reinterpret_cast<float*>(posePtr);
-
-    cv::Mat imageRGBA(state_->imgHeight_, state_->imgWidth_, CV_8UC4, imageData);
-    cv::Mat gray;
-    cv::cvtColor(imageRGBA, gray, cv::COLOR_RGBA2GRAY);
-
-    int status = processCameraPose(gray, getTimestamp());
-    Utils::toPoseArray(currFrame_->getTwc(), poseData);
-    return status;
-}
-
-int System::getFramePoints(int pointsPtr){
-    auto* data = reinterpret_cast<int*>(pointsPtr);
-    const auto& keypoints = currFrame_->getKeypoints2d();
-    int n = std::min((int) keypoints.size() * 2, 4096);
-    for(int i = 0, j = 0; i < n / 2; i++){
-        const auto &p = keypoints[i].unpx_;
-        data[j++] = static_cast<int>(p.x);
-        data[j++] = static_cast<int>(p.y);
-    }
-    return (int) keypoints.size();
-}
-
-int System::processCameraPose(cv::Mat& image, uint64_t timestamp){
-    currFrame_->id_++;
-    currFrame_->timestamp_ = timestamp;
-
-    visualFrontend_->track(image, timestamp);
-    if(state_->slamResetRequested_){
-        reset();
-        return 2;
-    }
-
-    if(!state_->slamReadyForInit_) return 3;
-    return 1;
-}
-
-uint64_t System::getTimestamp() {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(
-               std::chrono::system_clock::now().time_since_epoch()).count();
-}
-
-
-int System::findPlane(int locationPtr, int numIterations){
-    const auto& pts = mapManager_->getCurrentFrameMapPoints();
-    if(pts.size() < 32) return 0;
-    cv::Mat plane = fastPlaneDetection(pts, currFrame_->getTwc(), numIterations);
-    if(plane.empty()) return 0;
-    auto* poseData = reinterpret_cast<float*>(locationPtr);
-    Utils::toPoseArray(plane, poseData);
-    return 1;
-}
-
-cv::Mat System::fastPlaneDetection(const std::vector<Eigen::Vector3d>& points, const Sophus::SE3d& Twc, int numIterations){
-    const int N = (int) points.size();
-    std::vector<int> indices(N);
-    std::iota(indices.begin(), indices.end(), 0);
-
-    float bestError = 1e10;
-    Eigen::Vector4f bestPlane;
-    std::vector<float> distances(N);
-
-    std::mt19937 rng{std::random_device{}()};
-
-    for(int i = 0; i < numIterations; i++){
-        std::shuffle(indices.begin(), indices.end(), rng);
-        Eigen::MatrixXf A(3, 4);
-        A.block<3, 3>(0, 0) << points[indices[0]].cast<float>().transpose(),
-                        points[indices[1]].cast<float>().transpose(),
-                        points[indices[2]].cast<float>().transpose();
-        A.block<3, 1>(0, 3).setOnes();
-        Eigen::JacobiSVD<Eigen::MatrixXf> svd(A, Eigen::ComputeFullV);
-        Eigen::Vector4f plane = svd.matrixV().col(3);
-        Eigen::Vector3f normal = plane.head<3>();
-        float norm = normal.norm();
-        if(norm == 0) continue;
-        plane /= norm;
-        for(int j = 0; j < N; ++j){
-            distances[j] = std::abs(plane.head<3>().dot(points[j].template cast<float>()) + plane[3]);
+    if(!success || numInliers < 5 || outliersIndices.size() > 0.5 * vwpts.size() ||
+       Twc.translation().array().isInf().any() || Twc.translation().array().isNaN().any()){
+        if(!doP3P){
+            p3pReq_ = true;
         }
-        int medianIndex = std::max(20, N / 5);
-        std::nth_element(distances.begin(), distances.begin() + medianIndex, distances.end());
-        float median = distances[medianIndex];
-        if(median < bestError){
-            bestError = median;
-            bestPlane = plane;
+        if(state_->debug_){
+            std::cout << "- [Visual-Frontend]: Pose - Not enough inliers for reliable pose est. Resetting keyframe state\n";
         }
-    }
-    
-    if(bestError > 1.0f){
-        return cv::Mat();
+        resetFrame();
+        return false;
     }
 
-    Eigen::Vector3f t = Eigen::Vector3f::Zero();
-    for(const auto &p : points){
-        t += p.cast<float>();
+    currFrame_->setTwc(Twc);
+    p3pReq_ = false;
+    for(const auto &idx : outliersIndices){
+        mapManager_->removeObsFromCurrFrameById(vkpids[idx]);
     }
-    t /= points.size();
+    return true;
+}
 
-    Eigen::Matrix4f pose = Eigen::Matrix4f::Identity();
-    pose.block<3, 1>(0, 3) = t;
-    //pose.block<3, 3>(0, 0) = Eigen::Quaternionf().setFromTwoVectors(Eigen::Vector3f::UnitZ(), bestPlane.head<3>()).toRotationMatrix();
-    Eigen::Vector3f z = bestPlane.head<3>();
-    // Invalid plane
-    if(z.norm() < 1e-5) return cv::Mat();
+bool VisualFrontend::checkReadyForInit(){
+    double avgComputedRotParallax = computeParallax(currFrame_->keyframeId_, false, true);
+    if(avgComputedRotParallax <= state_->minAvgRotationParallax_){
+        return false;
+    }
+    auto keyframeIt = mapManager_->mapKeyframes_.find(currFrame_->keyframeId_);
+    if(keyframeIt == mapManager_->mapKeyframes_.end() || !keyframeIt->second){
+        return false;
+    }
+    auto prevKeyframe = keyframeIt->second;
+    size_t numKeypoints = currFrame_->numKeypoints_;
+    if(numKeypoints < 8){
+        if(state_->debug_){
+            std::cout << "- [Visual-Frontend]: CheckReady - Can't compute 5-pt Essential matrix. Not enough keypoints\n";
+        }
+        return false;
+    }
 
-    z.normalize();
-    Eigen::Quaternionf q;
-    if(z.isApprox(Eigen::Vector3f::UnitZ())){
-        q.setIdentity();
-    }else if(z.isApprox(-Eigen::Vector3f::UnitZ())){
-        q = Eigen::Quaternionf(Eigen::AngleAxisf(M_PI, Eigen::Vector3f::UnitX()));
+    std::vector<int> keypointIds, outliersIndices;
+    std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>> vkfbvs, vcurbvs;
+    keypointIds.reserve(numKeypoints);
+    outliersIndices.reserve(numKeypoints);
+    vkfbvs.reserve(numKeypoints);
+    vcurbvs.reserve(numKeypoints);
+
+    Eigen::Matrix3d RCurrKeyframe = prevKeyframe->getTcw().rotationMatrix() * currFrame_->getTwc().rotationMatrix();
+    int numParallax = 0;
+    float avgRotParallax = 0.f;
+    std::vector<float> parallaxVec;
+    for(const auto &it : currFrame_->mapKeypoints_){
+        auto &keypoint = it.second;
+        auto keyframeKeypoint = prevKeyframe->getKeypointById(keypoint.keypointId_);
+        if(keyframeKeypoint.keypointId_ != keypoint.keypointId_){
+            continue;
+        }
+        vkfbvs.push_back(keyframeKeypoint.bv_);
+        vcurbvs.push_back(keypoint.bv_);
+        keypointIds.push_back(keypoint.keypointId_);
+        Eigen::Vector3d rotBv = RCurrKeyframe * keypoint.bv_;
+        Eigen::Vector3d unpx = currFrame_->cameraCalibration_->K_ * rotBv;
+        cv::Point2f rotpx(unpx.x() / unpx.z(), unpx.y() / unpx.z());
+        float parallax = cv::norm(rotpx - keyframeKeypoint.unpx_);
+        avgRotParallax += parallax;
+        parallaxVec.push_back(parallax);
+        numParallax++;
+    }
+    if(numParallax < 8){
+        if(state_->debug_){
+            std::cout << "- [Visual-Frontend]: CheckReady - Can't compute 5-pt Essential matrix. Not enough keypoints in prev keyframe\n";
+        }
+        return false;
+    }
+    avgRotParallax /= float(numParallax);
+    if(avgRotParallax < state_->minAvgRotationParallax_){
+        if(state_->debug_){
+            std::cout << "- [Visual-Frontend]: CheckReady - Can't compute 5-pt Essential matrix. Not enough parallax " << avgRotParallax << " px)\n";
+        }
+        return false;
+    }
+    Eigen::Matrix3d Rwc;
+    Eigen::Vector3d twc;
+    Rwc.setIdentity();
+    twc.setZero();
+    bool success = MultiViewGeometry::compute5ptEssentialMatrix(
+        vkfbvs, vcurbvs, state_->multiViewRansacNumIterations_, state_->multiViewRansacError_,
+        true, state_->multiViewRandomEnabled_, currFrame_->cameraCalibration_->fx_,
+        currFrame_->cameraCalibration_->fy_, Rwc, twc, outliersIndices
+    );
+    if(!success){
+        if(state_->debug_){
+            std::cout << "- [Visual-Frontend]: CheckReady - 5-pt Essential Matrix failed\n";
+        }
+        return false;
+    }
+    for(const auto &index : outliersIndices){
+        mapManager_->removeObsFromCurrFrameById(keypointIds[index]);
+    }
+    twc.normalize();
+    currFrame_->setTwc(Rwc, twc);
+    return true;
+}
+
+bool VisualFrontend::checkNewKeyframeRequired(){
+    auto keyframeIt = mapManager_->mapKeyframes_.find(currFrame_->keyframeId_);
+    if(keyframeIt == mapManager_->mapKeyframes_.end()){
+        return false;
+    }
+    auto keyframe = keyframeIt->second;
+    double medianRotParallax = computeParallax(keyframe->keyframeId_, true, true);
+    int idDiff = currFrame_->id_ - keyframe->id_;
+    if(idDiff >= 5 && currFrame_->numOccupiedCells_ < 0.33 * state_->frameMaxNumKeypoints_){
+        return true;
+    }
+    if(idDiff >= 2 && currFrame_->numKeypoints3d_ < 20){
+        return true;
+    }
+    if(idDiff < 2 && currFrame_->numKeypoints3d_ > 0.5 * state_->frameMaxNumKeypoints_){
+        return false;
+    }
+    bool cx = medianRotParallax >= state_->minAvgRotationParallax_ / 2.;
+    bool c0 = medianRotParallax >= state_->minAvgRotationParallax_;
+    bool c1 = currFrame_->numKeypoints3d_ < 0.75 * keyframe->numKeypoints3d_;
+    bool c2 = currFrame_->numOccupiedCells_ < 0.5 * state_->frameMaxNumKeypoints_ && currFrame_->numKeypoints3d_ < 0.85 * keyframe->numKeypoints3d_;
+    bool keyFrameRequired = (c0 || c1 || c2) && cx;
+    return keyFrameRequired;
+}
+
+float VisualFrontend::computeParallax(const int keyframeId, bool doUnRotate, bool doMedian){
+    auto keyframeIt = mapManager_->mapKeyframes_.find(keyframeId);
+    if(keyframeIt == mapManager_->mapKeyframes_.end()){
+        return 0.f;
+    }
+    Eigen::Matrix3d Rkfcur(Eigen::Matrix3d::Identity());
+    if(doUnRotate){
+        Eigen::Matrix3d Rkfw = keyframeIt->second->getRcw();
+        Eigen::Matrix3d Rwcur = currFrame_->getRwc();
+        Rkfcur = Rkfw * Rwcur;
+    }
+    float avgParallax = 0.f;
+    int numParallax = 0;
+    std::vector<float> parallaxVec;
+    for(const auto &it : currFrame_->mapKeypoints_){
+        auto &kp = it.second;
+        auto keypoint = keyframeIt->second->getKeypointById(kp.keypointId_);
+        if(keypoint.keypointId_ != kp.keypointId_){
+            continue;
+        }
+        cv::Point2f unpx = kp.unpx_;
+        if(doUnRotate){
+            unpx = keyframeIt->second->projCamToImage(Rkfcur * kp.bv_);
+        }
+        float parallax = cv::norm(unpx - keypoint.unpx_);
+        avgParallax += parallax;
+        parallaxVec.push_back(parallax);
+        numParallax++;
+    }
+    if(numParallax == 0){
+        return 0.f;
+    }
+    avgParallax /= float(numParallax);
+    if(doMedian){
+        size_t mid = parallaxVec.size() / 2;
+        std::nth_element(parallaxVec.begin(), parallaxVec.begin() + mid, parallaxVec.end());
+        avgParallax = parallaxVec[mid];
+    }
+    return avgParallax;
+}
+
+void VisualFrontend::preprocessImage(cv::Mat &image){
+    cv::swap(currImage_, prevImage_);
+    if(state_->claheEnabled_){
+        clahe_->apply(image, currImage_);
     }else{
-        q = Eigen::Quaternionf().setFromTwoVectors(Eigen::Vector3f::UnitZ(), z);
+        currImage_ = image;
     }
-    pose.block<3,3>(0,0) = q.toRotationMatrix();
+    if(state_->kltEnabled_){
+        if(!currPyramid_.empty()){
+            prevPyramid_.swap(currPyramid_);
+        }
+        cv::buildOpticalFlowPyramid(currImage_, currPyramid_, state_->kltWinSize_, state_->kltPyramidLevels_);
+    }
+}
 
-    cv::Mat result;
-    cv::eigen2cv(pose, result);
-    return result;
+void VisualFrontend::resetFrame(){
+    if(state_->debug_){
+        std::cout << "- [Visual-Frontend]: ResetFrame\n";
+    }
+    auto mapKeypoints = currFrame_->mapKeypoints_;
+    for(const auto &keypoint : mapKeypoints){
+        mapManager_->removeObsFromCurrFrameById(keypoint.first);
+    }
+    currFrame_->mapKeypoints_.clear();
+    currFrame_->gridKeypointsIds_.clear();
+    currFrame_->gridKeypointsIds_.resize(currFrame_->gridCells_);
+    currFrame_->numKeypoints_ = 0;
+    currFrame_->numKeypoints2d_ = 0;
+    currFrame_->numKeypoints3d_ = 0;
+    currFrame_->numOccupiedCells_ = 0;
+}
+
+void VisualFrontend::reset(){
+    if(state_->debug_){
+        std::cout << "- [Visual-Frontend]: Reset\n";
+    }
+    currImage_.release();
+    prevImage_.release();
+    currPyramid_.clear();
+    prevPyramid_.clear();
+    keyframePyramid_.clear();
+    poseFailedCounter_ = 0;
+    p3pReq_ = false;
 }
