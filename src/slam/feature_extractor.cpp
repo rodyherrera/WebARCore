@@ -1,214 +1,155 @@
 #include "feature_extractor.hpp"
 #include <algorithm>
 #include <iterator>
+#include <unordered_map>
 
 cv::Ptr<cv::DescriptorExtractor> descriptor_;
 
-FeatureExtractor::FeatureExtractor(double maxQuality) : maxQuality_(maxQuality)
-{
-}
+FeatureExtractor::FeatureExtractor(double maxQuality) 
+    : maxQuality_(maxQuality),
+    descriptor_(cv::ORB::create(500, 1.0, 0)){}
 
-std::vector<cv::Point2f> FeatureExtractor::detectFeaturePoints(const cv::Mat &image, const int cellSize, const std::vector<cv::Point2f> &currKeypoints, const cv::Rect &roi)
+std::vector<cv::Point2f> FeatureExtractor::detectFeaturePoints(
+    const cv::Mat &image, 
+    const int cellSize, 
+    const std::vector<cv::Point2f> &currKeypoints, 
+    const cv::Rect &roi)
 {
-    if (image.empty())
-    {
-        return std::vector<cv::Point2f>();
+    if(image.empty()){
+        return {};
     }
 
-    size_t numCols = image.cols;
-    size_t numRows = image.rows;
-    size_t cellSizeHalf = cellSize / 4;
-    size_t numCellsH = numRows / cellSize;
-    size_t numCellsW = numCols / cellSize;
-    size_t numCells = numCellsH * numCellsW;
+    const size_t numCols = image.cols;
+    const size_t numRows = image.rows;
+    const size_t cellSizeHalf = cellSize / 4;
+    const size_t numCellsW = numCols / cellSize;
+    const size_t numCellsH = numRows / cellSize;
+    const size_t numCells = numCellsH * numCellsW;
 
     std::vector<cv::Point2f> detectedPx;
     detectedPx.reserve(numCells);
 
-    std::vector<std::vector<bool>> occupiedCells(numCellsH + 1, std::vector<bool>(numCellsW + 1, false));
-
+    std::vector<bool> occupiedCells(numCells, false);
     cv::Mat mask = cv::Mat::ones(image.rows, image.cols, CV_32F);
 
-    for (const auto &px: currKeypoints)
-    {
-        occupiedCells[px.y / cellSize][px.x / cellSize] = true;
-        cv::circle(mask, px, cellSizeHalf, cv::Scalar(0.), -1);
+    size_t numOccupied = 0;
+    for(const auto &px : currKeypoints){
+        size_t cellIdx = (size_t)(px.y / cellSize) * numCellsW + (size_t)(px.x / cellSize);
+        if(cellIdx < numCells){
+            occupiedCells[cellIdx] = true;
+            numOccupied++;
+            cv::circle(mask, px, cellSizeHalf, cv::Scalar(0.), -1);
+        }
     }
 
-    size_t numOccupied = 0;
+    std::vector<std::vector<cv::Point2f>> primaryDetections(numCells);
+    std::vector<std::vector<cv::Point2f>> secondaryDetections(numCells);
 
-    std::vector<std::vector<cv::Point2f>> matrixDetectedPx(numCells);
-    std::vector<std::vector<cv::Point2f>> matrixSecDetectionsPx(numCells);
-
-    auto cvRange = cv::Range(0, numCells);
-
-    parallel_for_(cvRange, [&](const cv::Range &range) {
-        for (int i = range.start; i < range.end; i++)
-        {
-            size_t r = floor(i / numCellsW);
+    cv::parallel_for_(cv::Range(0, static_cast<int>(numCells)), [&](const cv::Range &range){
+        cv::Mat filteredImage, hMap;
+        for(int i = range.start; i < range.end; i++){
+            size_t r = i / numCellsW;
             size_t c = i % numCellsW;
-
-            if (occupiedCells[r][c])
-            {
-                numOccupied++;
-                continue;
-            }
-
+            if(occupiedCells[i]) continue;
             size_t x = c * cellSize;
             size_t y = r * cellSize;
-
+            if(x + cellSize >= numCols || y + cellSize >= numRows) continue;
             cv::Rect regionOfInterest(x, y, cellSize, cellSize);
+            cv::GaussianBlur(image(regionOfInterest), filteredImage, cv::Size(3, 3), 0.);
+            cv::cornerMinEigenVal(filteredImage, hMap, 3, 3);
+            double minVal1, maxVal1;
+            cv::Point minPx1, maxPx1;
+            cv::minMaxLoc(hMap.mul(mask(regionOfInterest)), &minVal1, &maxVal1, &minPx1, &maxPx1);
+            maxPx1.x += x;
+            maxPx1.y += y;
+            if(maxPx1.x >= roi.x && maxPx1.y >= roi.y && 
+                    maxPx1.x < roi.x + roi.width && maxPx1.y < roi.y + roi.height && 
+                    maxVal1 >= maxQuality_){
+                primaryDetections[i].push_back(cv::Point2f(maxPx1));
+                cv::circle(mask, maxPx1, cellSizeHalf, cv::Scalar(0.), -1);
 
-            if (x + cellSize < numCols - 1 && y + cellSize < numRows - 1)
-            {
-                cv::Mat hMap;
-                cv::Mat filteredImage;
-                cv::GaussianBlur(image(regionOfInterest), filteredImage, cv::Size(3, 3), 0.);
-                cv::cornerMinEigenVal(filteredImage, hMap, 3, 3);
-
-                double minVal;
-                double maxVal;
-                cv::Point minPx;
-                cv::Point maxPx;
-
-                cv::minMaxLoc(hMap.mul(mask(regionOfInterest)), &minVal, &maxVal, &minPx, &maxPx);
-                maxPx.x += x;
-                maxPx.y += y;
-
-                if (maxPx.x < roi.x || maxPx.y < roi.y || maxPx.x >= roi.x + roi.width || maxPx.y >= roi.y + roi.height)
-                {
-                    continue;
-                }
-
-                if (maxVal >= maxQuality_)
-                {
-                    matrixDetectedPx.at(i).push_back(maxPx);
-                    cv::circle(mask, maxPx, cellSizeHalf, cv::Scalar(0.), -1);
-                }
-
-                cv::minMaxLoc(hMap.mul(mask(regionOfInterest)), &minVal, &maxVal, &minPx, &maxPx);
-                maxPx.x += x;
-                maxPx.y += y;
-
-                if (maxPx.x < roi.x || maxPx.y < roi.y || maxPx.x >= roi.x + roi.width || maxPx.y >= roi.y + roi.height)
-                {
-                    continue;
-                }
-
-                if (maxVal >= maxQuality_)
-                {
-                    matrixSecDetectionsPx.at(i).push_back(maxPx);
-                    cv::circle(mask, maxPx, cellSizeHalf, cv::Scalar(0.), -1);
+                double minVal2, maxVal2;
+                cv::Point minPx2, maxPx2;
+                cv::minMaxLoc(hMap.mul(mask(regionOfInterest)), &minVal2, &maxVal2, &minPx2, &maxPx2);
+                maxPx2.x += x;
+                maxPx2.y += y;
+                if(maxPx2.x >= roi.x && maxPx2.y >= roi.y && 
+                        maxPx2.x < roi.x + roi.width && maxPx2.y < roi.y + roi.height && 
+                       maxVal2 >= maxQuality_){
+                    secondaryDetections[i].push_back(cv::Point2f(maxPx2));
                 }
             }
         }
     });
 
-    for (const auto &px: matrixDetectedPx)
-    {
-        if (!px.empty())
-        {
-            detectedPx.insert(detectedPx.end(), px.begin(), px.end());
+    size_t primaryCount = 0;
+    for(const auto &detection : primaryDetections){
+        if(!detection.empty()){
+            detectedPx.push_back(detection[0]);
+            primaryCount++;
         }
     }
 
-    size_t numKeypoints = detectedPx.size();
+    size_t available = numCells - numOccupied;
+    size_t targetCount = available * 0.9;
 
-    if (numKeypoints + numOccupied < numCells)
-    {
-        size_t numSec = numCells - (numKeypoints + numOccupied);
-        size_t k = 0;
-
-        for (const auto &secKeypoints: matrixSecDetectionsPx)
-        {
-            if (!secKeypoints.empty())
-            {
-                detectedPx.push_back(secKeypoints.back());
-                k++;
-                if (k == numSec)
-                {
-                    break;
-                }
+    if(primaryCount < available){
+        for(const auto &detection : secondaryDetections){
+            if(!detection.empty() && detectedPx.size() < targetCount){
+                detectedPx.push_back(detection[0]);
             }
         }
     }
 
-    numKeypoints = detectedPx.size();
-
-    if (numKeypoints < 0.33 * (numCells - numOccupied))
-    {
+    if(detectedPx.size() < 0.33 * available){
         maxQuality_ *= 0.5;
-    }
-    else if (numKeypoints > 0.9 * (numCells - numOccupied))
-    {
+    }else if(detectedPx.size() > 0.9 * available){
         maxQuality_ *= 1.5;
     }
-
-    // Compute Corners with Sub-Pixel Accuracy
-    if (!detectedPx.empty())
-    {
-        // Set the need parameters to find the refined corners
-        cv::Size winSize = cv::Size(3, 3);
-        cv::Size zeroZone = cv::Size(-1, -1);
-        cv::TermCriteria criteria = cv::TermCriteria(cv::TermCriteria::EPS + cv::TermCriteria::MAX_ITER, 30, 0.01);
-        cv::cornerSubPix(image, detectedPx, winSize, zeroZone, criteria);
+ 
+    if(!detectedPx.empty()){
+        cv::TermCriteria criteria(cv::TermCriteria::EPS + cv::TermCriteria::MAX_ITER, 30, 0.01);
+        cv::cornerSubPix(image, detectedPx, cv::Size(3, 3), cv::Size(-1, -1), criteria);
     }
 
     return detectedPx;
 }
 
-std::vector<cv::Mat> FeatureExtractor::describeFeaturePoints(const cv::Mat &image, const std::vector<cv::Point2f> &points) const
-{
-    if (points.empty())
-    {
-        return std::vector<cv::Mat>();
+
+std::vector<cv::Mat> FeatureExtractor::describeFeaturePoints(
+    const cv::Mat &image, 
+    const std::vector<cv::Point2f> &points) const{
+    if(points.empty()){
+        return {};
     }
 
     std::vector<cv::KeyPoint> keypoints;
-    size_t numKeypoints = points.size();
-    keypoints.reserve(numKeypoints);
-    std::vector<cv::Mat> descriptors;
-    descriptors.reserve(numKeypoints);
-
+    keypoints.reserve(points.size());
     cv::KeyPoint::convert(points, keypoints);
 
-    cv::Mat descs;
+    cv::Mat descriptorsMatrix;
+    descriptor_->compute(image, keypoints, descriptorsMatrix);
 
-    if (descriptor_ == nullptr)
-    {
-        descriptor_ = cv::ORB::create(500, 1., 0);
-    }
+    std::vector<cv::Mat> descriptors(points.size());
+    
+    if(!descriptorsMatrix.empty()){
+        std::unordered_map<std::string, size_t> keypointMap;
+        for (size_t i = 0; i < keypoints.size(); ++i) {
+            std::string key = std::to_string(int(keypoints[i].pt.x * 100)) + "_" + 
+                              std::to_string(int(keypoints[i].pt.y * 100));
+            keypointMap[key] = i;
+        }
 
-    descriptor_->compute(image, keypoints, descs);
-
-    if (keypoints.empty())
-    {
-        return std::vector<cv::Mat>(numKeypoints, cv::Mat());
-    }
-
-    size_t k = 0;
-
-    for (size_t i = 0; i < numKeypoints; i++)
-    {
-        if (k < keypoints.size())
-        {
-            if (keypoints[k].pt == points[i])
-            {
-                descriptors.push_back(descs.row(k));
-                k++;
-            }
-            else
-            {
-                descriptors.push_back(cv::Mat());
+        for(size_t i = 0; i < points.size(); ++i){
+            std::string key = std::to_string(int(points[i].x * 100)) + "_" + 
+                             std::to_string(int(points[i].y * 100));
+            
+            auto it = keypointMap.find(key);
+            if(it != keypointMap.end()){
+                descriptors[i] = descriptorsMatrix.row(it->second).clone();
             }
         }
-        else
-        {
-            descriptors.push_back(cv::Mat());
-        }
     }
-
-    assert(descriptors.size() == points.size());
 
     return descriptors;
 }
