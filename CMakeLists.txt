@@ -94,7 +94,7 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
       -s EXPORT_NAME='WebARCoreWASM' \
       -s ENVIRONMENT=web,worker \
       -s INITIAL_MEMORY=256MB \
-      -s ALLOW_MEMORY_GROWTH=1 \
+      -s ALLOW_MEMORY_GROWTH=0 \
       -s ALLOW_TABLE_GROWTH=1 \
       -s MODULARIZE=1 \
       -s EXPORT_ES6=1 \
@@ -122,26 +122,27 @@ else ()
         -s ENVIRONMENT=web,worker \
         -s USE_PTHREADS=1 \
         -s PTHREAD_POOL_SIZE=4 \
-        -s INITIAL_MEMORY=256MB \
+        -s INITIAL_MEMORY=512MB \
+        -s MAXIMUM_MEMORY=2GB \
         -s ALLOW_MEMORY_GROWTH=1 \
         -s ALLOW_TABLE_GROWTH=1 \
+        -s MALLOC=emmalloc \
         -s MODULARIZE=1 \
+        -s EXPORTED_FUNCTIONS=['_malloc'] \
         -s EXPORT_ES6=1 \
         -s EXPORT_ALL=1 \
         -s SINGLE_FILE=1 \
         -s ASSERTIONS=0 \
         -s DYLINK_DEBUG=0 \
-        -s EXPORTED_FUNCTIONS=['_malloc'] \
+        -s DISABLE_EXCEPTION_CATCHING=1 \
         -s ERROR_ON_UNDEFINED_SYMBOLS=0 \
-        -s DISABLE_EXCEPTION_CATCHING=0 \
+        -s WASM_BIGINT=1 \
         -s USE_ZLIB=1 \
         -std=c++17 \
         -msimd128 \
         -O3 \
-        -Oz \
         --extern-post-js ../src/system.js \
         --no-entry \
-        --no-check-features \
         --bind")
 endif ()
 unset(CMAKE_BUILD_TYPE CACHE)

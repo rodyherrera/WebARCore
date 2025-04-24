@@ -5,6 +5,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import selfsigned from 'selfsigned';
 import mime from 'mime-types';
+import { hostname } from 'os';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -67,13 +68,13 @@ app.get('*', (req, res) => {
     }
 });
 
-const sslOptions = {
+const options = {
     key: fs.readFileSync(keyPath),
     cert: fs.readFileSync(certPath)
 };
 
 ensureSelfSignedCert();
 
-https.createServer(sslOptions, app).listen(8000, () => {
+https.createServer(options, app).listen({ host: '0.0.0.0', port: 8000 }, () => {
     console.log('🚀 HTTPS server at https://0.0.0.0:8000');
 });
