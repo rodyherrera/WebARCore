@@ -123,7 +123,6 @@ else ()
         -s USE_PTHREADS=1 \
         -s PTHREAD_POOL_SIZE=4 \
         -s INITIAL_MEMORY=512MB \
-        -s MAXIMUM_MEMORY=2GB \
         -s ALLOW_MEMORY_GROWTH=1 \
         -s ALLOW_TABLE_GROWTH=1 \
         -s MALLOC=emmalloc \

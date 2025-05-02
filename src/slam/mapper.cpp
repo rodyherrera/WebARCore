@@ -1,8 +1,10 @@
 #include "mapper.hpp"
 #include <memory>
+#include <algorithm>
 
 Mapper::Mapper(std::shared_ptr<State> state, std::shared_ptr<MapManager> mapManager, std::shared_ptr<Frame> frame)
-        : state_(state), mapManager_(mapManager), currFrame_(frame), optimizer_(new Optimizer(state_, mapManager_))
+        : state_(std::move(state)), mapManager_(std::move(mapManager)), currFrame_(std::move(frame)), 
+          optimizer_(std::make_unique<Optimizer>(state_, mapManager_))
 {
 }
 
@@ -26,22 +28,15 @@ void Mapper::processNewKeyframe(const Keyframe &keyframe)
     // check if reset is required
     if (state_->slamReadyForInit_)
     {
-        if (keyframe.keyframeId_ == 1 && newKeyframe->numKeypoints3d_ < 30)
+        // Check for reset conditions
+        if ((keyframe.keyframeId_ == 1 && newKeyframe->numKeypoints3d_ < 30) || 
+            (keyframe.keyframeId_ < 10 && newKeyframe->numKeypoints3d_ < 3))
         {
             if (state_->debug_)
             {
-                std::cout << "- [Mapper]: NewKeyframe - Reset Requested. Bad initialization detected! " << std::endl;
-            }
-
-            state_->slamResetRequested_ = true;
-            return;
-        }
-
-        if (keyframe.keyframeId_ < 10 && newKeyframe->numKeypoints3d_ < 3)
-        {
-            if (state_->debug_)
-            {
-                std::cout << "- [Mapper]: NewKeyframe - Reset Requested. Reset Requested. Num 3D kps:" << newKeyframe->numKeypoints3d_ << std::endl;
+                std::cout << "- [Mapper]: NewKeyframe - Reset Requested. " 
+                          << (keyframe.keyframeId_ == 1 ? "Bad initialization detected! " : 
+                             "Num 3D kps:" + std::to_string(newKeyframe->numKeypoints3d_)) << std::endl;
             }
 
             state_->slamResetRequested_ = true;
@@ -74,7 +69,9 @@ void Mapper::optimize(const std::shared_ptr<Frame> &keyframe)
     // apply map filtering
     if (state_->mapKeyframeFilteringRatio_ < 1.0 && keyframe->keyframeId_ >= 20)
     {
-        auto covisibleKeyframeMap = keyframe->getCovisibleKeyframeMap();
+        const auto covisibleKeyframeMap = keyframe->getCovisibleKeyframeMap();
+        const float filteringRatio = state_->mapKeyframeFilteringRatio_;
+        const int minObservations = state_->baMinNumCommonKeypointsObservations_ / 2;
 
         for (auto it = covisibleKeyframeMap.rbegin(); it != covisibleKeyframeMap.rend(); it++)
         {
@@ -90,13 +87,13 @@ void Mapper::optimize(const std::shared_ptr<Frame> &keyframe)
                 continue;
             }
 
-            auto keyframe = mapManager_->getKeyframe(keyframeId);
-            if (keyframe == nullptr)
+            auto coKeyframe = mapManager_->getKeyframe(keyframeId);
+            if (coKeyframe == nullptr)
             {
                 keyframe->removeCovisibleKeyframe(keyframeId);
                 continue;
             }
-            else if ((int) keyframe->numKeypoints3d_ < state_->baMinNumCommonKeypointsObservations_ / 2)
+            else if ((int) coKeyframe->numKeypoints3d_ < minObservations)
             {
                 mapManager_->removeKeyframe(keyframeId);
                 continue;
@@ -105,7 +102,7 @@ void Mapper::optimize(const std::shared_ptr<Frame> &keyframe)
             size_t numGoodObservations = 0;
             size_t numTotal = 0;
 
-            for (const auto &kp: keyframe->getKeypoints3d())
+            for (const auto &kp: coKeyframe->getKeypoints3d())
             {
                 auto mapPoint = mapManager_->getMapPoint(kp.keypointId_);
 
@@ -118,22 +115,15 @@ void Mapper::optimize(const std::shared_ptr<Frame> &keyframe)
                 {
                     continue;
                 }
-                else
+                else if (mapPoint->getObservedKeyframeIds().size() > 4)
                 {
-                    size_t numObservedKeyframeIds = mapPoint->getObservedKeyframeIds().size();
-
-                    if (numObservedKeyframeIds > 4)
-                    {
-                        numGoodObservations++;
-                    }
+                    numGoodObservations++;
                 }
 
                 numTotal++;
             }
 
-            float ratio = (float) numGoodObservations / (float) numTotal;
-
-            if (ratio > state_->mapKeyframeFilteringRatio_)
+            if (numTotal > 0 && static_cast<float>(numGoodObservations) / numTotal > filteringRatio)
             {
                 mapManager_->removeKeyframe(keyframeId);
             }
@@ -143,55 +133,41 @@ void Mapper::optimize(const std::shared_ptr<Frame> &keyframe)
 
 void Mapper::triangulateTemporal(Frame &frame)
 {
-    std::vector<Keypoint> keypoints = frame.getKeypoints2d();
+    const std::vector<Keypoint> &keypoints = frame.getKeypoints2d();
 
     if (keypoints.empty())
     {
         return;
     }
 
-    Sophus::SE3d Twcj = frame.getTwc();
+    const Sophus::SE3d Twcj = frame.getTwc();
+    const size_t numKeypoints = keypoints.size();
 
-    // Setup triangulation for OpenGV-based mapping
-    size_t numKeypoints = keypoints.size();
-
-    // Init a keyframe object that will point to the prev keyframe to use for triangulation
+    // Use a single keyframe pointer and reset it when needed
     std::shared_ptr<Frame> keyframe;
-    keyframe = std::make_shared<Frame>();
-    keyframe->keyframeId_ = -1;
-
-    // Relative motions between new keyframe and previous keyframes
+    
+    // Cache for relative motion data
     int relKeyframeId = -1;
     Sophus::SE3d Tcicj;
     Sophus::SE3d Tcjci;
     Eigen::Matrix3d Rcicj;
 
-    // New 3D map points projections
-    cv::Point2f lPxProj;
-    cv::Point2f rPxProj;
-    float lDist;
-    float rDist;
-    Eigen::Vector3d lPoint;
-    Eigen::Vector3d rPoint;
-    Eigen::Vector3d wpt;
-
     int good = 0;
     int candidates = 0;
 
-    std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d> > wPoints;
-    std::vector<int> mapPointIds;
-    wPoints.reserve(numKeypoints);
-    mapPointIds.reserve(numKeypoints);
+    const float maxReprojError = state_->mapMaxReprojectionError_;
 
-    // go through all 2D kps in new keyframe
+    // Avoid repeated allocations in the loop
     for (size_t i = 0; i < numKeypoints; i++)
     {
+        const auto &keypoint = keypoints[i];
+        
         // Get related map point and check if it is ready to be triangulated
-        std::shared_ptr<MapPoint> mapPoint = mapManager_->getMapPoint(keypoints.at(i).keypointId_);
+        std::shared_ptr<MapPoint> mapPoint = mapManager_->getMapPoint(keypoint.keypointId_);
 
-        if (mapPoint == nullptr)
+        if (!mapPoint)
         {
-            mapManager_->removeMapPointObs(keypoints.at(i).keypointId_, frame.keyframeId_);
+            mapManager_->removeMapPointObs(keypoint.keypointId_, frame.keyframeId_);
             continue;
         }
 
@@ -202,7 +178,7 @@ void Mapper::triangulateTemporal(Frame &frame)
         }
 
         // Get the set of keyframes sharing observation of this 2D map point
-        std::set<int> coKeyframeIds = mapPoint->getObservedKeyframeIds();
+        const std::set<int> &coKeyframeIds = mapPoint->getObservedKeyframeIds();
 
         // Continue if new keyframe is the only one observing it
         if (coKeyframeIds.size() < 2)
@@ -220,7 +196,7 @@ void Mapper::triangulateTemporal(Frame &frame)
         // Get the 1st keyframe observation of the related map point
         keyframe = mapManager_->getKeyframe(keyframeId);
 
-        if (keyframe == nullptr)
+        if (!keyframe)
         {
             continue;
         }
@@ -236,102 +212,119 @@ void Mapper::triangulateTemporal(Frame &frame)
             relKeyframeId = keyframeId;
         }
 
-        Keypoint keyframeKeypoint = keyframe->getKeypointById(keypoints.at(i).keypointId_);
+        const Keypoint &keyframeKeypoint = keyframe->getKeypointById(keypoint.keypointId_);
 
-        if (keyframeKeypoint.keypointId_ != keypoints.at(i).keypointId_)
+        if (keyframeKeypoint.keypointId_ != keypoint.keypointId_)
         {
             continue;
         }
 
         // Check rotation-compensated parallax
-        cv::Point2f rotPx = frame.projCamToImage(Rcicj * keypoints.at(i).bv_);
+        cv::Point2f rotPx = frame.projCamToImage(Rcicj * keypoint.bv_);
         double parallax = cv::norm(keyframeKeypoint.unpx_ - rotPx);
 
         candidates++;
 
         // Compute 3D pos and check if its good or not
-        lPoint = MultiViewGeometry::triangulate(Tcicj, keyframeKeypoint.bv_, keypoints.at(i).bv_);
+        Eigen::Vector3d lPoint = MultiViewGeometry::triangulate(Tcicj, keyframeKeypoint.bv_, keypoint.bv_);
 
         // Project into right cam (new keyframe)
-        rPoint = Tcjci * lPoint;
+        Eigen::Vector3d rPoint = Tcjci * lPoint;
 
         // Ensure that the 3D map point is in front of both camera
         if (lPoint.z() < 0.1 || rPoint.z() < 0.1)
         {
-            if (parallax > 20.)
+            if (parallax > 20.0)
             {
                 mapManager_->removeMapPointObs(keyframeKeypoint.keypointId_, frame.keyframeId_);
             }
-
             continue;
         }
 
         // Remove map point with high reprojection error
-        lPxProj = keyframe->projCamToImage(lPoint);
-        rPxProj = frame.projCamToImage(rPoint);
-        lDist = cv::norm(lPxProj - keyframeKeypoint.unpx_);
-        rDist = cv::norm(rPxProj - keypoints.at(i).unpx_);
+        cv::Point2f lPxProj = keyframe->projCamToImage(lPoint);
+        cv::Point2f rPxProj = frame.projCamToImage(rPoint);
+        float lDist = cv::norm(lPxProj - keyframeKeypoint.unpx_);
+        float rDist = cv::norm(rPxProj - keypoint.unpx_);
 
-        if (lDist > state_->mapMaxReprojectionError_ || rDist > state_->mapMaxReprojectionError_)
+        if (lDist > maxReprojError || rDist > maxReprojError)
         {
-            if (parallax > 20.)
+            if (parallax > 20.0)
             {
                 mapManager_->removeMapPointObs(keyframeKeypoint.keypointId_, frame.keyframeId_);
             }
-
             continue;
         }
 
         // The 3D pos is good, update SLAM map point and related keyframe / Frame
-        wpt = keyframe->projCamToWorld(lPoint);
-        mapManager_->updateMapPoint(keypoints.at(i).keypointId_, wpt, 1. / lPoint.z());
+        Eigen::Vector3d wpt = keyframe->projCamToWorld(lPoint);
+        mapManager_->updateMapPoint(keypoint.keypointId_, wpt, 1.0 / lPoint.z());
 
         good++;
     }
+}
+
+float Mapper::computeFOVThreshold(const Frame &frame) const
+{
+    const float fovV = 0.5 * frame.cameraCalibration_->imgHeight_ / frame.cameraCalibration_->fy_;
+    const float fovH = 0.5 * frame.cameraCalibration_->imgWidth_ / frame.cameraCalibration_->fx_;
+
+    const float maxRadFov = std::atan(fovH > fovV ? fovH : fovV);
+    return std::cos(maxRadFov);
 }
 
 bool Mapper::matchingToLocalMap(Frame &frame)
 {
     // Maximum number of map points to track
     const size_t maxNumLocalMapPoints = state_->frameMaxNumKeypoints_ * 10;
+    const size_t halfMaxPoints = maxNumLocalMapPoints / 2;
 
     // get local map of oldest co-keyframe and add it to set of map points to search for
-    auto covisibleKeyframeMap = frame.getCovisibleKeyframeMap();
+    const auto &covisibleKeyframeMap = frame.getCovisibleKeyframeMap();
 
     if (!covisibleKeyframeMap.empty() && frame.localMapPointIds_.size() < maxNumLocalMapPoints)
     {
         int keyframeId = covisibleKeyframeMap.begin()->first;
         auto keyframe = mapManager_->getKeyframe(keyframeId);
-        while (keyframe == nullptr && keyframeId > 0)
+        
+        // Find a valid keyframe
+        while (!keyframe && keyframeId > 0)
         {
             keyframeId--;
             keyframe = mapManager_->getKeyframe(keyframeId);
         }
 
-        if (keyframe != nullptr)
+        if (keyframe)
         {
             frame.localMapPointIds_.insert(keyframe->localMapPointIds_.begin(), keyframe->localMapPointIds_.end());
-        }
-
-        // go for another round
-        if (keyframe->keyframeId_ > 0 && frame.localMapPointIds_.size() < 0.5 * maxNumLocalMapPoints)
-        {
-            keyframe = mapManager_->getKeyframe(keyframe->keyframeId_);
-            while (keyframe == nullptr && keyframeId > 0)
+            
+            // go for another round if needed
+            if (keyframe->keyframeId_ > 0 && frame.localMapPointIds_.size() < halfMaxPoints)
             {
-                keyframeId--;
-                keyframe = mapManager_->getKeyframe(keyframeId);
-            }
+                keyframe = mapManager_->getKeyframe(keyframe->keyframeId_);
+                
+                // Find another valid keyframe
+                while (!keyframe && keyframeId > 0)
+                {
+                    keyframeId--;
+                    keyframe = mapManager_->getKeyframe(keyframeId);
+                }
 
-            if (keyframe != nullptr)
-            {
-                frame.localMapPointIds_.insert(keyframe->localMapPointIds_.begin(), keyframe->localMapPointIds_.end());
+                if (keyframe)
+                {
+                    frame.localMapPointIds_.insert(keyframe->localMapPointIds_.begin(), keyframe->localMapPointIds_.end());
+                }
             }
         }
     }
 
     // Track local map
-    std::map<int, int> mapPrevIdNewId = matchToMap(frame, state_->mapMaxProjectionPxDistance_, state_->mapMaxDescriptorDistance_, frame.localMapPointIds_);
+    std::map<int, int> mapPrevIdNewId = matchToMap(
+        frame, 
+        state_->mapMaxProjectionPxDistance_, 
+        state_->mapMaxDescriptorDistance_, 
+        frame.localMapPointIds_
+    );
 
     // no matches
     if (mapPrevIdNewId.empty())
@@ -340,18 +333,16 @@ bool Mapper::matchingToLocalMap(Frame &frame)
     }
 
     // Merge matches
-    for (const auto &ids: mapPrevIdNewId)
+    for (const auto &ids : mapPrevIdNewId)
     {
-        int oldMapPointId = ids.first;
-        int newMapPointId = ids.second;
-
-        mapManager_->mergeMapPoints(oldMapPointId, newMapPointId);
+        mapManager_->mergeMapPoints(ids.first, ids.second);
     }
 
     return true;
 }
 
-std::map<int, int> Mapper::matchToMap(const Frame &frame, const float maxProjectionError, const float distRatio, std::unordered_set<int> &localMapPointIds)
+std::map<int, int> Mapper::matchToMap(const Frame &frame, float maxProjectionError, float distRatio, 
+                                     const std::unordered_set<int> &localMapPointIds)
 {
     std::map<int, int> mapPrevIdNewId;
 
@@ -361,33 +352,21 @@ std::map<int, int> Mapper::matchToMap(const Frame &frame, const float maxProject
         return mapPrevIdNewId;
     }
 
-    // Compute max field of view
-    const float fovV = 0.5 * frame.cameraCalibration_->imgHeight_ / frame.cameraCalibration_->fy_;
-    const float fovH = 0.5 * frame.cameraCalibration_->imgWidth_ / frame.cameraCalibration_->fx_;
-
-    float maxRadFov = 0.;
-    if (fovH > fovV)
-    {
-        maxRadFov = std::atan(fovH);
-    }
-    else
-    {
-        maxRadFov = std::atan(fovV);
-    }
-
-    const float view_th = std::cos(maxRadFov);
+    const float view_th = computeFOVThreshold(frame);
 
     // Define max distance from projection
     float maxPxDist = maxProjectionError;
     if (frame.numKeypoints3d_ < 30)
     {
-        maxPxDist *= 2.;
+        maxPxDist *= 2.0f;
     }
 
-    std::map<int, std::vector<std::pair<int, float>>> keypointIdsMapPointIdsDist;
+    // Use unordered_map for faster lookup
+    std::unordered_map<int, std::vector<std::pair<int, float>>> keypointIdsMapPointIdsDist;
+    keypointIdsMapPointIdsDist.reserve(localMapPointIds.size() / 2); // Estimate capacity
 
     // Go through all map point from the local map
-    for (const int mapPointId: localMapPointIds)
+    for (const int mapPointId : localMapPointIds)
     {
         if (frame.isObservingKeypoint(mapPointId))
         {
@@ -396,16 +375,12 @@ std::map<int, int> Mapper::matchToMap(const Frame &frame, const float maxProject
 
         auto mapPoint = mapManager_->getMapPoint(mapPointId);
 
-        if (mapPoint == nullptr)
-        {
-            continue;
-        }
-        else if (!mapPoint->is3d_ || mapPoint->desc_.empty())
+        if (!mapPoint || !mapPoint->is3d_ || mapPoint->desc_.empty())
         {
             continue;
         }
 
-        Eigen::Vector3d wpt = mapPoint->getPoint();
+        const Eigen::Vector3d &wpt = mapPoint->getPoint();
 
         //Project 3D map point into keyframe's image
         Eigen::Vector3d campt = frame.projWorldToCam(wpt);
@@ -430,21 +405,18 @@ std::map<int, int> Mapper::matchToMap(const Frame &frame, const float maxProject
         }
 
         // Get all the kps around the map point's projection
-        auto nearKeyPoints = frame.getSurroundingKeypoints(projPx);
+        const auto &nearKeyPoints = frame.getSurroundingKeypoints(projPx);
 
         // Find two best matches
-        float minDist = mapPoint->desc_.cols * distRatio * 8.; // * 8 to get bits size
+        const float minDist = mapPoint->desc_.cols * distRatio * 8.0f; // * 8 to get bits size
         int bestId = -1;
         int secId = -1;
-
         float bestDist = minDist;
         float secDist = minDist;
 
-        std::vector<int> keypointIds;
-        std::vector<float> pxDistances;
-        cv::Mat descriptors;
+        const std::set<int> &mapPointKeyframes = mapPoint->getObservedKeyframeIds();
 
-        for (const auto &kp: nearKeyPoints)
+        for (const auto &kp : nearKeyPoints)
         {
             if (kp.keypointId_ < 0)
             {
@@ -459,10 +431,9 @@ std::map<int, int> Mapper::matchToMap(const Frame &frame, const float maxProject
             }
 
             // Check that this kp and the map point are indeed candidates for matching
-            // (by ensuring that they are never both observed in a given keyframe)
             auto kpMapPoint = mapManager_->getMapPoint(kp.keypointId_);
 
-            if (kpMapPoint == nullptr)
+            if (!kpMapPoint)
             {
                 mapManager_->removeMapPointObs(kp.keypointId_, frame.keyframeId_);
                 continue;
@@ -473,12 +444,11 @@ std::map<int, int> Mapper::matchToMap(const Frame &frame, const float maxProject
                 continue;
             }
 
+            // Check if they share any keyframes (not candidates if they do)
             bool isCandidate = true;
-            auto mapPointKeyframes = mapPoint->getObservedKeyframeIds();
-
-            for (const auto &keyframeId: kpMapPoint->getObservedKeyframeIds())
+            for (const auto &keyframeId : kpMapPoint->getObservedKeyframeIds())
             {
-                if (mapPointKeyframes.count(keyframeId))
+                if (mapPointKeyframes.count(keyframeId) > 0)
                 {
                     isCandidate = false;
                     break;
@@ -490,13 +460,13 @@ std::map<int, int> Mapper::matchToMap(const Frame &frame, const float maxProject
                 continue;
             }
 
-            float coProjectionPx = 0.;
+            float coProjectionPx = 0.0f;
             size_t numCoKeyPoints = 0;
 
-            for (const auto &keyframeId: kpMapPoint->getObservedKeyframeIds())
+            for (const auto &keyframeId : kpMapPoint->getObservedKeyframeIds())
             {
                 auto coKeyframe = mapManager_->getKeyframe(keyframeId);
-                if (coKeyframe != nullptr)
+                if (coKeyframe)
                 {
                     auto cokp = coKeyframe->getKeypointById(kp.keypointId_);
                     if (cokp.keypointId_ == kp.keypointId_)
@@ -515,7 +485,7 @@ std::map<int, int> Mapper::matchToMap(const Frame &frame, const float maxProject
                 }
             }
 
-            if (coProjectionPx / numCoKeyPoints > maxPxDist)
+            if (numCoKeyPoints > 0 && coProjectionPx / numCoKeyPoints > maxPxDist)
             {
                 continue;
             }
@@ -524,9 +494,8 @@ std::map<int, int> Mapper::matchToMap(const Frame &frame, const float maxProject
 
             if (dist <= bestDist)
             {
-                secDist = bestDist; // Will stay at minDist 1st time
-                secId = bestId; // Will stay at -1 1st time
-
+                secDist = bestDist;
+                secId = bestId;
                 bestDist = dist;
                 bestId = kp.keypointId_;
             }
@@ -537,12 +506,10 @@ std::map<int, int> Mapper::matchToMap(const Frame &frame, const float maxProject
             }
         }
 
-        if (bestId != -1 && secId != -1)
+        // Ratio test to ensure match uniqueness
+        if (bestId != -1 && secId != -1 && 0.9 * secDist < bestDist)
         {
-            if (0.9 * secDist < bestDist)
-            {
-                bestId = -1;
-            }
+            bestId = -1;
         }
 
         if (bestId < 0)
@@ -550,28 +517,28 @@ std::map<int, int> Mapper::matchToMap(const Frame &frame, const float maxProject
             continue;
         }
 
-        std::pair<int, float> midDist(mapPointId, bestDist);
-        if (!keypointIdsMapPointIdsDist.count(bestId))
+        // Use emplace_back instead of push_back
+        auto it = keypointIdsMapPointIdsDist.find(bestId);
+        if (it == keypointIdsMapPointIdsDist.end())
         {
-            std::vector<std::pair<int, float>> v(1, midDist);
-            keypointIdsMapPointIdsDist.emplace(bestId, v);
+            keypointIdsMapPointIdsDist.emplace(bestId, std::vector<std::pair<int, float>>{std::make_pair(mapPointId, bestDist)});
         }
         else
         {
-            keypointIdsMapPointIdsDist.at(bestId).push_back(midDist);
+            it->second.emplace_back(mapPointId, bestDist);
         }
     }
 
-    for (const auto &keypointIdMapPointDist: keypointIdsMapPointIdsDist)
+    // Find best map point for each keypoint
+    for (const auto &keypointIdMapPointDist : keypointIdsMapPointIdsDist)
     {
         int keypointId = keypointIdMapPointDist.first;
-
-        float bestDist = 1024;
         int bestMapPointId = -1;
+        float bestDist = std::numeric_limits<float>::max();
 
-        for (const auto &mapPointDist: keypointIdMapPointDist.second)
+        for (const auto &mapPointDist : keypointIdMapPointDist.second)
         {
-            if (mapPointDist.second <= bestDist)
+            if (mapPointDist.second < bestDist)
             {
                 bestDist = mapPointDist.second;
                 bestMapPointId = mapPointDist.first;

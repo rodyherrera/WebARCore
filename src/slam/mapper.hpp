@@ -3,6 +3,7 @@
 #include <queue>
 #include <vector>
 #include <unordered_set>
+#include <unordered_map>
 #include "map_manager.hpp"
 #include "multi_view_geometry.hpp"
 #include "optimizer.hpp"
@@ -42,7 +43,7 @@ public:
     void processNewKeyframe(const Keyframe &keyframe);
 
 private:
-    std::map<int, int> matchToMap(const Frame &frame, const float maxProjectionError, const float distRatio, std::unordered_set<int> &localMapPointIds);
+    std::map<int, int> matchToMap(const Frame &frame, float maxProjectionError, float distRatio, const std::unordered_set<int> &localMapPointIds);
 
     bool matchingToLocalMap(Frame &frame);
 
@@ -54,4 +55,7 @@ private:
     std::shared_ptr<Frame> currFrame_;
     std::shared_ptr<MapManager> mapManager_;
     std::unique_ptr<Optimizer> optimizer_;
+    
+    // Cache for frequently used values
+    float computeFOVThreshold(const Frame &frame) const;
 };
