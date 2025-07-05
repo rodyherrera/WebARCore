@@ -537,9 +537,6 @@ add_subdirectory(unsupported)
 
 add_subdirectory(demos EXCLUDE_FROM_ALL)
 
-# must be after test and unsupported, for configuring buildtests.in
-add_subdirectory(scripts EXCLUDE_FROM_ALL)
-
 # TODO: consider also replacing EIGEN_BUILD_BTL by a custom target "make btl"?
 if(EIGEN_BUILD_BTL)
   add_subdirectory(bench/btl EXCLUDE_FROM_ALL)

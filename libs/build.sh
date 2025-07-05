@@ -57,20 +57,28 @@ build_OPENCV(){
 }
 
 build_EIGEN(){
+  echo "Building Eigen (headers only)…"
+
   rm -rf "$INSTALL_DIR/eigen" "$LIB_ROOT/eigen/build"
   mkdir -p "$LIB_ROOT/eigen/build"
   pushd "$LIB_ROOT/eigen/build" >/dev/null
+
+  # Si usas el tarball oficial, nada más instalar headers
   emcmake cmake .. \
     -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_CXX_STANDARD=17 \
     -DCMAKE_TOOLCHAIN_FILE="$EMSCRIPTEN_CMAKE_DIR" \
-    -DCMAKE_C_FLAGS="$C_FLAGS" \
-    -DCMAKE_CXX_FLAGS="$CXX_FLAGS" \
     -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR/eigen" \
     -DBUILD_SHARED_LIBS=OFF \
-    -DBUILD_TESTING=OFF
-  emmake make -j install
+    -DBUILD_TESTING=OFF \
+    -DEIGEN_BUILD_DOC=OFF \
+    -DEIGEN_BUILD_PKGCONFIG=OFF \
+    -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON
+
+  # Instalación paralela
+  emmake make -j"$(nproc)" install
+
   popd >/dev/null
+  echo "✔ Eigen built and installed in $INSTALL_DIR/eigen"
 }
 
 build_OBINDEX2(){
