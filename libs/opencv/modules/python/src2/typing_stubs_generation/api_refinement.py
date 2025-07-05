@@ -52,6 +52,20 @@ def apply_manual_api_refinement(root: NamespaceNode) -> None:
     ])
 
 
+def make_optional_none_return(root_node: NamespaceNode,
+                              function_symbol_name: SymbolName) -> None:
+    """
+    Make return type Optional[MatLike],
+    for the functions that may return None.
+    """
+    function = find_function_node(root_node, function_symbol_name)
+    for overload in function.overloads:
+        if overload.return_type is not None:
+            if not isinstance(overload.return_type.type_node, OptionalTypeNode):
+                overload.return_type.type_node = OptionalTypeNode(
+                    overload.return_type.type_node
+                )
+
 def export_matrix_type_constants(root: NamespaceNode) -> None:
     MAX_PREDEFINED_CHANNELS = 4
 
@@ -325,6 +339,9 @@ def _find_argument_index(arguments: Sequence[FunctionNode.Arg],
 NODES_TO_REFINE = {
     SymbolName(("cv", ), (), "resize"): make_optional_arg("dsize"),
     SymbolName(("cv", ), (), "calcHist"): make_optional_arg("mask"),
+    SymbolName(("cv", ), (), "floodFill"): make_optional_arg("mask"),
+    SymbolName(("cv", ), (), "imread"): make_optional_none_return,
+    SymbolName(("cv", ), (), "imdecode"): make_optional_none_return,
 }
 
 ERROR_CLASS_PROPERTIES = (

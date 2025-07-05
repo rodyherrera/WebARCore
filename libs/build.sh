@@ -27,22 +27,22 @@ case "$BUILD_TYPE" in
   SIMD)
     echo "⚙️  Building with SIMD enabled"
     INSTALL_DIR="$LIB_ROOT/build_simd"
-    CXX_FLAGS="-O3 -std=c++17 -msimd128"
-    C_FLAGS="-O3 -std=c11 -msimd128"
+    CXX_FLAGS="-O3 -std=c++23 -msimd128"
+    C_FLAGS="-O3 -std=c23 -msimd128"
     CONF_OPENCV="--simd"
     ;;
   THREADS)
     echo "⚙️  Building with THREADS enabled"
     INSTALL_DIR="$LIB_ROOT/build_threads"
-    CXX_FLAGS="-O3 -std=c++17 -s USE_PTHREADS=1 -s PTHREAD_POOL_SIZE=4"
-    C_FLAGS="-O3 -std=c11 -s USE_PTHREADS=1 -s PTHREAD_POOL_SIZE=4"
+    CXX_FLAGS="-O3 -std=c++23 -s USE_PTHREADS=1 -s PTHREAD_POOL_SIZE=4"
+    C_FLAGS="-O3 -std=c23 -s USE_PTHREADS=1 -s PTHREAD_POOL_SIZE=4"
     CONF_OPENCV="--threads"
     ;;
   *)
     echo "⚙️  Building with DEFAULT settings"
     INSTALL_DIR="$LIB_ROOT/build"
-    CXX_FLAGS="-O3 -std=c++17"
-    C_FLAGS="-O3 -std=c11"
+    CXX_FLAGS="-O3 -std=c++23"
+    C_FLAGS="-O3 -std=c23"
     CONF_OPENCV=""
     ;;
 esac
@@ -161,7 +161,7 @@ build_OPENGV(){
   pushd "$LIB_ROOT/opengv/build" >/dev/null
   emcmake cmake .. \
     -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_CXX_STANDARD=17 \
+    -DCMAKE_CXX_STANDARD=23 \
     -DCMAKE_TOOLCHAIN_FILE="$EMSCRIPTEN_CMAKE_DIR" \
     -DCMAKE_C_FLAGS="$C_FLAGS" \
     -DCMAKE_CXX_FLAGS="$CXX_FLAGS" \

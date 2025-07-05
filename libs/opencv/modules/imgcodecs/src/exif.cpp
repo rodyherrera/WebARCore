@@ -94,6 +94,10 @@ ExifEntry_t ExifReader::getTag(const ExifTagName tag) const
     return entry;
 }
 
+const std::vector<unsigned char>& ExifReader::getData() const
+{
+    return m_data;
+}
 
 /**
  * @brief Parsing the exif data buffer and prepare (internal) exif directory
@@ -165,7 +169,7 @@ void ExifReader::parseExif()
  *
  * @return INTEL, MOTO or NONE
  */
-Endianess_t ExifReader::getFormat() const
+Endianness_t ExifReader::getFormat() const
 {
     if (m_data.size() < 1)
         return NONE;

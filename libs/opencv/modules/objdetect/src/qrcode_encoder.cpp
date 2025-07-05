@@ -342,7 +342,13 @@ int QRCodeEncoderImpl::versionAuto(const std::string& input_str)
         return -1;
     }
 
-    const auto tmp_version = findVersionCapacity((int)payload_tmp.size(), ecc_level, possible_version);
+    int nbits = static_cast<int>(payload_tmp.size());
+
+    // Extra info for structure's position, total and parity + mode of final message
+    if (mode_type == MODE_STRUCTURED_APPEND)
+        nbits += 4 + 4 + 8 + 4;
+
+    const auto tmp_version = findVersionCapacity(nbits, ecc_level, possible_version);
 
     return tmp_version;
 }
@@ -365,7 +371,7 @@ void QRCodeEncoderImpl::generateQR(const std::string &input)
     auto string_itr = input.begin();
     for (int i = struct_num; i > 0; --i)
     {
-        sequence_num = (uint8_t) i;
+        sequence_num = (uint8_t) (struct_num - i);
         size_t segment_begin = string_itr - input.begin();
         size_t segment_end = (input.end() - string_itr) / i;
 
@@ -391,7 +397,9 @@ void QRCodeEncoderImpl::generateQR(const std::string &input)
         original = Mat(Size(version_size, version_size), CV_8UC1, Scalar(255));
         masked_data = original.clone();
         Mat qrcode = masked_data.clone();
+        std::swap(version_level, tmp_version_level);
         generatingProcess(input_info, qrcode);
+        std::swap(version_level, tmp_version_level);
         final_qrcodes.push_back(qrcode);
     }
 }
@@ -705,17 +713,17 @@ void QRCodeEncoderImpl::padBitStream()
     else if (pad_num <= 4)
     {
         int payload_size = (int)payload.size();
-        writeDecNumber(0, payload_size, payload);
+        payload.insert(payload.end(), payload_size, 0);
     }
     else
     {
-        writeDecNumber(0, 4, payload);
+        payload.insert(payload.end(), 4, 0);
 
         int i = payload.size() % bits;
 
         if (i != 0)
         {
-            writeDecNumber(0, bits - i, payload);
+            payload.insert(payload.end(), bits - i, 0);
         }
         pad_num = total_data - (int)payload.size();
 
@@ -1323,11 +1331,12 @@ private:
 
             int val = 0;
             while (bits >= actualBits) {
+                CV_CheckLT(idx, data.size(), "Not enough bits in the bitstream");
                 val |= data[idx++] << (bits - actualBits);
                 bits -= actualBits;
                 actualBits = 8;
             }
-            if (bits) {
+            if (bits && idx < data.size()) {
                 val |= data[idx] >> (actualBits - bits);
                 actualBits -= bits;
                 data[idx] &= 255 >> (8 - actualBits);
@@ -1356,6 +1365,7 @@ private:
     void decodeByte(String& result);
     void decodeECI(String& result);
     void decodeKanji(String& result);
+    void decodeStructuredAppend(String& result);
 };
 
 QRCodeDecoder::~QRCodeDecoder()
@@ -1746,6 +1756,11 @@ void QRCodeDecoderImpl::decodeSymbols(String& result) {
             decodeECI(result);
         else if (currMode == QRCodeEncoder::EncodeMode::MODE_KANJI)
             decodeKanji(result);
+        else if (currMode == QRCodeEncoder::EncodeMode::MODE_STRUCTURED_APPEND) {
+            sequence_num = static_cast<uint8_t>(bitstream.next(4));
+            total_num = static_cast<uint8_t>(1 + bitstream.next(4));
+            parity = static_cast<uint8_t>(bitstream.next(8));
+        }
         else
             CV_Error(Error::StsNotImplemented, format("mode %d", currMode));
     }

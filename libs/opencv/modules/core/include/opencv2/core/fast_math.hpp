@@ -84,7 +84,7 @@
   #if defined(CV_INLINE_ROUND_FLT)
     // user-specified version
     // CV_INLINE_ROUND_DBL should be defined too
-  #elif defined __GNUC__ && defined __arm__ && (defined __ARM_PCS_VFP || defined __ARM_VFPV3__ || defined __ARM_NEON__) && !defined __SOFTFP__
+  #elif defined __GNUC__ && defined __arm__ && (defined __ARM_PCS_VFP || defined __ARM_VFPV3__ || defined __ARM_NEON) && !defined __SOFTFP__
     // 1. general scheme
     #define ARM_ROUND(_value, _asm_string) \
         int res; \
@@ -303,7 +303,7 @@ CV_INLINE int cvIsInf( double value )
 {
 #if defined CV_INLINE_ISINF_DBL
     CV_INLINE_ISINF_DBL(value);
-#elif defined(__x86_64__) || defined(_M_X64) || defined(__aarch64__) || defined(_M_ARM64) || defined(__PPC64__) || defined(__loongarch64)
+#elif defined(__x86_64__) || defined(_M_X64) || defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__PPC64__) || defined(__loongarch64)
     Cv64suf ieee754;
     ieee754.f = value;
     return (ieee754.u & 0x7fffffffffffffff) ==
