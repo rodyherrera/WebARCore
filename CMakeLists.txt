@@ -1,4 +1,5 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.18)
+cmake_policy(SET CMP0177 NEW)
 set(PROJECT_NAME "webarcore")
 project(${PROJECT_NAME})
 
@@ -30,32 +31,43 @@ if (NOT DIST_DIR)
     set(DIST_DIR ${CMAKE_BINARY_DIR}/../../../dist)
 endif (NOT DIST_DIR)
 
-set(LIBS_BUILD_FOLDER "./libs/build_threads/")
+set(LIBS_BUILD_FOLDER "./libs/build/")
 
-include_directories(${LIBS_BUILD_FOLDER}/../opencv/modules/calib3d/include/)
-include_directories(${LIBS_BUILD_FOLDER}/../opencv/modules/core/include/)
-include_directories(${LIBS_BUILD_FOLDER}/../opencv/modules/features2d/include/)
-include_directories(${LIBS_BUILD_FOLDER}/../opencv/modules/flann/include/)
-include_directories(${LIBS_BUILD_FOLDER}/../opencv/modules/highgui/include/)
-include_directories(${LIBS_BUILD_FOLDER}/../opencv/modules/imgcodecs/include/)
-include_directories(${LIBS_BUILD_FOLDER}/../opencv/modules/imgproc/include/)
-include_directories(${LIBS_BUILD_FOLDER}/../opencv/modules/objdetect/include/)
-include_directories(${LIBS_BUILD_FOLDER}/../opencv/modules/video/include/)
-include_directories(${LIBS_BUILD_FOLDER}/../opencv/modules/dnn/include/)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/libs/opencv/modules/dnn/include)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/libs/opencv/include)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/libs/opencv/modules/core/include)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/libs/opencv/modules/imgproc/include)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/libs/opencv/modules/features2d/include)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/libs/opencv/modules/photo/include)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/libs/opencv/modules/video/include)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/libs/opencv/modules/videoio/include)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/libs/opencv/modules/highgui/include)
-include_directories(${LIBS_BUILD_FOLDER}/opencv/)
+set(OPENCV_INCLUDE_DIRS
+    ${LIBS_BUILD_FOLDER}/../opencv/modules/calib3d/include/
+    ${LIBS_BUILD_FOLDER}/../opencv/modules/core/include/
+    ${LIBS_BUILD_FOLDER}/../opencv/modules/features2d/include/
+    ${LIBS_BUILD_FOLDER}/../opencv/modules/flann/include/
+    ${LIBS_BUILD_FOLDER}/../opencv/modules/highgui/include/
+    ${LIBS_BUILD_FOLDER}/../opencv/modules/imgcodecs/include/
+    ${LIBS_BUILD_FOLDER}/../opencv/modules/imgproc/include/
+    ${LIBS_BUILD_FOLDER}/../opencv/modules/objdetect/include/
+    ${LIBS_BUILD_FOLDER}/../opencv/modules/video/include/
+    ${LIBS_BUILD_FOLDER}/../opencv/modules/dnn/include/
+    ${CMAKE_CURRENT_SOURCE_DIR}/libs/opencv/modules/dnn/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/libs/opencv/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/libs/opencv/modules/core/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/libs/opencv/modules/imgproc/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/libs/opencv/modules/features2d/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/libs/opencv/modules/calib3d/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/libs/opencv/modules/flann/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/libs/opencv/modules/photo/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/libs/opencv/modules/video/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/libs/opencv/modules/videoio/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/libs/opencv/modules/highgui/include
+    ${LIBS_BUILD_FOLDER}/opencv/
+    ${CMAKE_CURRENT_SOURCE_DIR}/libs/opencv/build
+)
+
+set(CERES_INCLUDE_DIRS
+    ${LIBS_BUILD_FOLDER}/ceres-solver/include/
+)
+
+include_directories(${OPENCV_INCLUDE_DIRS})
+include_directories(${CERES_INCLUDE_DIRS})
 include_directories(${LIBS_BUILD_FOLDER}/opengv/include/)
-include_directories(${LIBS_BUILD_FOLDER}/eigen/include/eigen3)
-include_directories(${LIBS_BUILD_FOLDER}/Sophus/include/)
-include_directories(${LIBS_BUILD_FOLDER}/ceres-solver/include/)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/libs/eigen)
+include_directories(${LIBS_BUILD_FOLDER}/Sophus/include)
 include_directories(src)
 
 # Add the project source files
@@ -120,8 +132,6 @@ else ()
     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "\
         -s EXPORT_NAME='WebARCoreWASM' \
         -s ENVIRONMENT=web,worker \
-        -s USE_PTHREADS=1 \
-        -s PTHREAD_POOL_SIZE=4 \
         -s INITIAL_MEMORY=512MB \
         -s ALLOW_MEMORY_GROWTH=1 \
         -s ALLOW_TABLE_GROWTH=1 \
