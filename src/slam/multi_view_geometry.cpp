@@ -74,7 +74,7 @@ bool MultiViewGeometry::p3pRansac(
 
     ransac.sac_model_ = absposeproblem_ptr;
     ransac.threshold_ = (1.0 - cos(atan(errorThreshold / focal)));
-    ransac.max_iterations_ = maxIterations;
+    ransac.max_iterations_ = std::min(maxIterations, 50); // Cap iterations for performance
 
     // Computing the pose from P3P
     ransac.computeModel(0);

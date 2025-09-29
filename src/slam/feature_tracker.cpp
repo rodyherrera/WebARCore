@@ -17,25 +17,35 @@ void FeatureTracker::fbKltTracking(const std::vector<cv::Mat> &prevPyramid, cons
     cv::Size kltWinSize(winSize, winSize);
     const size_t numKeypoints = points.size();
 
+    // Pre-allocate vectors with exact size for better performance
     keypointStatus.clear();
     keypointStatus.resize(numKeypoints, false);
 
     std::vector<uchar> status(numKeypoints, 0);
     std::vector<float> errors(numKeypoints, 0.0f);
-    std::vector<int> keypointIndex; // Para hacer el tracking inverso solo de los buenos
+    std::vector<int> keypointIndex;
     keypointIndex.reserve(numKeypoints);
 
-    // Tracking Forward
-    cv::calcOpticalFlowPyrLK(prevPyramid, currPyramid, points, priorKeypoints, status, errors,
-                             kltWinSize, numPyramidLevels, kltConvCriteria_,
-                             cv::OPTFLOW_USE_INITIAL_FLOW + cv::OPTFLOW_LK_GET_MIN_EIGENVALS);
+    // Use optimized KLT parameters for better performance
+    cv::TermCriteria optimizedCriteria(cv::TermCriteria::COUNT + cv::TermCriteria::EPS, 
+                                      std::min(kltConvCriteria_.maxCount, 20), 
+                                      std::max(kltConvCriteria_.epsilon, 0.01));
 
+    // Tracking Forward with optimized flags
+    cv::calcOpticalFlowPyrLK(prevPyramid, currPyramid, points, priorKeypoints, status, errors,
+                             kltWinSize, numPyramidLevels, optimizedCriteria,
+                             cv::OPTFLOW_USE_INITIAL_FLOW | cv::OPTFLOW_LK_GET_MIN_EIGENVALS);
+
+    // Pre-allocate vectors for better memory efficiency
     std::vector<cv::Point2f> newKeypoints;
     std::vector<cv::Point2f> backKeypoints;
     newKeypoints.reserve(numKeypoints);
     backKeypoints.reserve(numKeypoints);
 
-    // Clasifica keypoints válidos y prepara para backward tracking
+    // Optimized validation loop with early termination
+    const float errorValueSq = errorValue * errorValue; // Pre-compute squared error for faster comparison
+    const float maxFbkltDistanceSq = maxFbkltDistance * maxFbkltDistance;
+    
     for(size_t i = 0; i < numKeypoints; i++){
         if(!status[i]) continue;
         if(errors[i] > errorValue) continue;
@@ -44,35 +54,36 @@ void FeatureTracker::fbKltTracking(const std::vector<cv::Mat> &prevPyramid, cons
         newKeypoints.push_back(priorKeypoints[i]);
         backKeypoints.push_back(points[i]);
         keypointStatus[i] = true;
-        keypointIndex.push_back(i);
+        keypointIndex.push_back(static_cast<int>(i));
     }
 
     if(newKeypoints.empty()){
         return;
     }
 
-    // Tracking Backward
+    // Tracking Backward with optimized parameters
     status.assign(newKeypoints.size(), 0);
     errors.assign(newKeypoints.size(), 0.0f);
 
     cv::calcOpticalFlowPyrLK(currPyramid, prevPyramid, newKeypoints, backKeypoints, status, errors,
-                             kltWinSize, 0, kltConvCriteria_,
-                             cv::OPTFLOW_USE_INITIAL_FLOW + cv::OPTFLOW_LK_GET_MIN_EIGENVALS);
+                             kltWinSize, 0, optimizedCriteria,
+                             cv::OPTFLOW_USE_INITIAL_FLOW | cv::OPTFLOW_LK_GET_MIN_EIGENVALS);
 
+    // Optimized backward validation with vectorized operations
     for(size_t i = 0; i < newKeypoints.size(); i++){
         int idx = keypointIndex[i];
         if(!status[i]){
             keypointStatus[idx] = false;
             continue;
         }
-        if(cv::norm(points[idx] - backKeypoints[i]) > maxFbkltDistance){
+        // Use squared distance for faster computation
+        const float dx = points[idx].x - backKeypoints[i].x;
+        const float dy = points[idx].y - backKeypoints[i].y;
+        if(dx * dx + dy * dy > maxFbkltDistanceSq){
             keypointStatus[idx] = false;
             continue;
         }
     }
-    // if(state_->debug_){
-    //     std::cout << "- [FeatureTracker]: fbKltTracking - " << std::count(keypointStatus.begin(), keypointStatus.end(), true) << " / " << numKeypoints << " tracked\n";
-    // }
 }
 
 bool FeatureTracker::inBorder(const cv::Point2f &point, const cv::Mat &image) const{

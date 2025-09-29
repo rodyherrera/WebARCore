@@ -7,11 +7,18 @@ System::System() = default;
 System::~System() = default;
 
 void System::configure(int imageWidth, int imageHeight, double fx, double fy, double cx, double cy, double k1, double k2, double p1, double p2){
-    state_ = std::make_shared<State>(imageWidth, imageHeight, 40);
+    state_ = std::make_shared<State>(imageWidth, imageHeight, 60); // Increased for max performance
     state_->debug_ = false;
-    state_->claheEnabled_ = false;
-    state_->mapKeyframeFilteringRatio_ = 0.95;
+    state_->claheEnabled_ = false; // Disabled for max performance
+    state_->mapKeyframeFilteringRatio_ = 0.85; // Reduced for max performance
     state_->p3pEnabled_ = true;
+    
+    // Optimize for maximum performance
+    state_->kltPyramidLevels_ = 2; // Reduced pyramid levels
+    state_->multiViewRansacNumIterations_ = 50; // Reduced RANSAC iterations
+    state_->trackerMaxIterations_ = 20; // Reduced tracker iterations
+    state_->kltError_ = 25.0; // Slightly relaxed error threshold
+    state_->minAvgRotationParallax_ = 30.0; // Reduced parallax threshold
 
     cameraCalibration_ = std::make_shared<CameraCalibration>(fx, fy, cx, cy, k1, k2, p1, p2, imageWidth, imageHeight, 20);
     currFrame_ = std::make_shared<Frame>(cameraCalibration_, state_->frameMaxCellSize_);
@@ -90,6 +97,15 @@ int System::getFramePoints(int pointsPtr){
 }
 
 int System::processCameraPose(cv::Mat& image, uint64_t timestamp){
+    if(performanceMonitoringEnabled_){
+        currentFrameTime_ = std::chrono::high_resolution_clock::now();
+        if(frameCount_ > 0){
+            lastFrameDuration_ = std::chrono::duration<double, std::milli>(currentFrameTime_ - lastFrameTime_).count();
+        }
+        lastFrameTime_ = currentFrameTime_;
+        frameCount_++;
+    }
+    
     currFrame_->id_++;
     currFrame_->timestamp_ = timestamp;
 
@@ -186,4 +202,28 @@ cv::Mat System::fastPlaneDetection(const std::vector<Eigen::Vector3d>& points, c
     cv::Mat result;
     cv::eigen2cv(pose, result);
     return result;
+}
+
+double System::getLastFrameTime(){
+    return lastFrameDuration_;
+}
+
+int System::getCurrentFPS(){
+    if(!performanceMonitoringEnabled_ || frameCount_ == 0){
+        return 0;
+    }
+    auto now = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - fpsStartTime_);
+    if(duration.count() > 0){
+        return static_cast<int>(frameCount_ * 1000.0 / duration.count());
+    }
+    return 0;
+}
+
+void System::enablePerformanceMonitoring(bool enable){
+    performanceMonitoringEnabled_ = enable;
+    if(enable){
+        fpsStartTime_ = std::chrono::high_resolution_clock::now();
+        frameCount_ = 0;
+    }
 }

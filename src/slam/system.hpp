@@ -37,6 +37,11 @@ public:
     int findPlane(int locationPtr, int numIterations);
 
     int getFramePoints(int pointsPtr);
+    
+    // Performance monitoring
+    double getLastFrameTime();
+    int getCurrentFPS();
+    void enablePerformanceMonitoring(bool enable);
 
 private:
     int processCameraPose(cv::Mat &image, uint64_t timestamp);
@@ -53,4 +58,12 @@ private:
 
     Eigen::Vector3d currTranslation_;
     Eigen::Vector3d prevTranslation_;
+    
+    // Performance monitoring
+    bool performanceMonitoringEnabled_ = false;
+    std::chrono::high_resolution_clock::time_point lastFrameTime_;
+    std::chrono::high_resolution_clock::time_point currentFrameTime_;
+    double lastFrameDuration_ = 0.0;
+    int frameCount_ = 0;
+    std::chrono::high_resolution_clock::time_point fpsStartTime_;
 };

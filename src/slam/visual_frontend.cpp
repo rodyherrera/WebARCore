@@ -402,7 +402,10 @@ void VisualFrontend::preprocessImage(cv::Mat &image){
         if(!currPyramid_.empty()){
             prevPyramid_.swap(currPyramid_);
         }
-        cv::buildOpticalFlowPyramid(currImage_, currPyramid_, state_->kltWinSize_, state_->kltPyramidLevels_);
+        // Use optimized pyramid building with reduced levels for performance
+        cv::buildOpticalFlowPyramid(currImage_, currPyramid_, state_->kltWinSize_, 
+                                   std::min(state_->kltPyramidLevels_, 2), 
+                                   cv::BORDER_REFLECT_101, cv::BORDER_DEFAULT, false);
     }
 }
 

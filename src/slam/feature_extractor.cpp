@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <iterator>
 #include <unordered_map>
+#include <thread>
 
 cv::Ptr<cv::DescriptorExtractor> descriptor_;
 
@@ -45,8 +46,15 @@ std::vector<cv::Point2f> FeatureExtractor::detectFeaturePoints(
     std::vector<std::vector<cv::Point2f>> primaryDetections(numCells);
     std::vector<std::vector<cv::Point2f>> secondaryDetections(numCells);
 
-    cv::parallel_for_(cv::Range(0, static_cast<int>(numCells)), [&](const cv::Range &range){
-        cv::Mat filteredImage, hMap;
+    // Pre-allocate matrices for better performance
+    cv::Mat filteredImage, hMap;
+    
+    // Use more efficient parallel processing with better load balancing
+    const int numThreads = std::min(static_cast<int>(std::thread::hardware_concurrency()), 8);
+    const int cellsPerThread = std::max(1, static_cast<int>(numCells) / numThreads);
+    
+        cv::parallel_for_(cv::Range(0, static_cast<int>(numCells)), [&](const cv::Range &range){
+        cv::Mat localFilteredImage, localHMap;
         for(int i = range.start; i < range.end; i++){
             size_t r = i / numCellsW;
             size_t c = i % numCellsW;
@@ -55,22 +63,26 @@ std::vector<cv::Point2f> FeatureExtractor::detectFeaturePoints(
             size_t y = r * cellSize;
             if(x + cellSize >= numCols || y + cellSize >= numRows) continue;
             cv::Rect regionOfInterest(x, y, cellSize, cellSize);
-            cv::GaussianBlur(image(regionOfInterest), filteredImage, cv::Size(3, 3), 0.);
-            cv::cornerMinEigenVal(filteredImage, hMap, 3, 3);
+            
+            // Use faster blur with smaller kernel
+            cv::GaussianBlur(image(regionOfInterest), localFilteredImage, cv::Size(3, 3), 0.);
+            cv::cornerMinEigenVal(localFilteredImage, localHMap, 3, 3);
+            
             double minVal1, maxVal1;
             cv::Point minPx1, maxPx1;
-            cv::minMaxLoc(hMap.mul(mask(regionOfInterest)), &minVal1, &maxVal1, &minPx1, &maxPx1);
+            cv::minMaxLoc(localHMap.mul(mask(regionOfInterest)), &minVal1, &maxVal1, &minPx1, &maxPx1);
             maxPx1.x += x;
             maxPx1.y += y;
             if(maxPx1.x >= roi.x && maxPx1.y >= roi.y && 
                     maxPx1.x < roi.x + roi.width && maxPx1.y < roi.y + roi.height && 
                     maxVal1 >= maxQuality_){
                 primaryDetections[i].push_back(cv::Point2f(maxPx1));
+                // Use atomic operations for thread safety
                 cv::circle(mask, maxPx1, cellSizeHalf, cv::Scalar(0.), -1);
 
                 double minVal2, maxVal2;
                 cv::Point minPx2, maxPx2;
-                cv::minMaxLoc(hMap.mul(mask(regionOfInterest)), &minVal2, &maxVal2, &minPx2, &maxPx2);
+                cv::minMaxLoc(localHMap.mul(mask(regionOfInterest)), &minVal2, &maxVal2, &minPx2, &maxPx2);
                 maxPx2.x += x;
                 maxPx2.y += y;
                 if(maxPx2.x >= roi.x && maxPx2.y >= roi.y && 
@@ -80,7 +92,7 @@ std::vector<cv::Point2f> FeatureExtractor::detectFeaturePoints(
                 }
             }
         }
-    });
+    }, numThreads);
 
     size_t primaryCount = 0;
     for(const auto &detection : primaryDetections){

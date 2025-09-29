@@ -88,8 +88,8 @@ file(GLOB LIB_CERES
 file(GLOB LIB_OPENGV
         "${LIBS_BUILD_FOLDER}/opengv/lib/libopengv.a")
 
-        # Add pthread support and hide warnings
-set_source_files_properties(${SRC_FILES} PROPERTIES COMPILE_FLAGS "-w -pthread")
+        # Hide warnings
+set_source_files_properties(${SRC_FILES} PROPERTIES COMPILE_FLAGS "-w")
 
 # Link third party libraries
 target_link_libraries(${PROJECT_NAME}
@@ -132,7 +132,7 @@ else ()
     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "\
         -s EXPORT_NAME='WebARCoreWASM' \
         -s ENVIRONMENT=web,worker \
-        -s INITIAL_MEMORY=512MB \
+        -s INITIAL_MEMORY=1024MB \
         -s ALLOW_MEMORY_GROWTH=1 \
         -s ALLOW_TABLE_GROWTH=1 \
         -s MALLOC=emmalloc \
@@ -147,9 +147,13 @@ else ()
         -s ERROR_ON_UNDEFINED_SYMBOLS=0 \
         -s WASM_BIGINT=1 \
         -s USE_ZLIB=1 \
+        -s WASM=1 \
         -std=c++17 \
         -msimd128 \
         -O3 \
+        -flto \
+        -ffast-math \
+        -funroll-loops \
         --extern-post-js ../src/system.js \
         --no-entry \
         --bind")

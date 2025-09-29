@@ -7,13 +7,15 @@
 #include <opencv2/core.hpp>
 
 /*
-   Values                       FAST:       AVERAGE:        ACCURATE:
-   ----------------------------------------------------------------------------
-   frameMaxCellSize_:           50          45              35
-   claheEnabled_:               false       false           true
-   mapKeyframeFilteringRatio:   0.9         0.9             0.95
-   p3pEnabled_ :                true        false           false
-   ----------------------------------------------------------------------------
+   Values                       FAST:       AVERAGE:        ACCURATE:    MAX_PERFORMANCE:
+   --------------------------------------------------------------------------------------------
+   frameMaxCellSize_:           50          45              35           60
+   claheEnabled_:               false       false           true         false
+   mapKeyframeFilteringRatio:   0.9         0.9             0.95         0.85
+   p3pEnabled_ :                true        false           false        true
+   kltPyramidLevels_:           3           3               3            2
+   multiViewRansacNumIterations_: 100       100             100          50
+   --------------------------------------------------------------------------------------------
 */
 
 class State
