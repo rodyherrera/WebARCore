@@ -5,8 +5,8 @@
 #include <unordered_set>
 #include <unordered_map>
 #include "map_manager.hpp"
-#include "multi_view_geometry.hpp"
-#include "optimizer.hpp"
+#include "../vision/multi_view_geometry.hpp"
+#include "../optimization/optimizer.hpp"
 
 struct Keyframe
 {

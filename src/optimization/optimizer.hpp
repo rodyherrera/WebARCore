@@ -3,7 +3,7 @@
 #include <iomanip>
 #include <deque>
 #include <fstream>
-#include "map_manager.hpp"
+#include "../slam/map_manager.hpp"
 
 class Optimizer
 {

@@ -4,10 +4,10 @@
 #include <memory>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
-#include "state.hpp"
+#include "../core/state.hpp"
 #include "map_manager.hpp"
 #include "mapper.hpp"
-#include "feature_tracker.hpp"
+#include "../vision/feature_tracker.hpp"
 
 class MotionModel{
 public:

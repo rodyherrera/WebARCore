@@ -1,19 +1,22 @@
+
 #pragma once
 
 #include <memory>
 #include <vector>
 #include <queue>
+#include <chrono>
+#include <Eigen/Core>
 #include <opencv2/core.hpp>
 #include <opencv2/highgui.hpp>
-#include <Eigen/Core>
-#include "camera_calibration.hpp"
-#include "feature_extractor.hpp"
-#include "feature_tracker.hpp"
-#include "frame.hpp"
+#include <sophus/se3.hpp>
+#include "../core/frame.hpp"
+#include "../core/state.hpp"
+#include "../core/utils.hpp"
+#include "../vision/camera_calibration.hpp"
+#include "../vision/feature_extractor.hpp"
+#include "../vision/feature_tracker.hpp"
 #include "mapper.hpp"
 #include "map_manager.hpp"
-#include "state.hpp"
-#include "utils.hpp"
 #include "visual_frontend.hpp"
 
 class System
@@ -38,7 +41,6 @@ public:
 
     int getFramePoints(int pointsPtr);
     
-    // Performance monitoring
     double getLastFrameTime();
     int getCurrentFPS();
     void enablePerformanceMonitoring(bool enable);
@@ -59,7 +61,6 @@ private:
     Eigen::Vector3d currTranslation_;
     Eigen::Vector3d prevTranslation_;
     
-    // Performance monitoring
     bool performanceMonitoringEnabled_ = false;
     std::chrono::high_resolution_clock::time_point lastFrameTime_;
     std::chrono::high_resolution_clock::time_point currentFrameTime_;

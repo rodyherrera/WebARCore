@@ -1,4 +1,3 @@
-#pragma once
 #include "ceres_parametrization.hpp"
 #include <Eigen/Core>
 #include <Eigen/Geometry>

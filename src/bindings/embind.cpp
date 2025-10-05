@@ -2,7 +2,7 @@
 #include <emscripten/val.h>
 #include <emscripten/emscripten.h>
 
-#include "./system.hpp"
+#include "../slam/system.hpp"
 
 using namespace emscripten;
 

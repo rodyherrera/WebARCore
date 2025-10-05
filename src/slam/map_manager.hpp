@@ -2,11 +2,11 @@
 
 #include <unordered_map>
 #include <vector>
-#include "state.hpp"
-#include "frame.hpp"
-#include "map_point.hpp"
-#include "feature_extractor.hpp"
-#include "feature_tracker.hpp"
+#include "../core/state.hpp"
+#include "../core/frame.hpp"
+#include "../core/map_point.hpp"
+#include "../vision/feature_extractor.hpp"
+#include "../vision/feature_tracker.hpp"
 
 class MapManager {
 public:

@@ -10,7 +10,7 @@
 #include <Eigen/Geometry>
 #include <opencv2/core.hpp>
 #include <sophus/se3.hpp>
-#include "camera_calibration.hpp"
+#include "../vision/camera_calibration.hpp"
 
 struct Keypoint
 {

@@ -1,0 +1,204 @@
+cmake_minimum_required(VERSION 3.18)
+set(PROJECT_NAME "webarcore")
+project(${PROJECT_NAME})
+
+# Use C++ 17 by default
+set(CMAKE_CXX_STANDARD 17)
+
+# Ensure correct version of emscripten
+if ("${EMSCRIPTEN_VERSION}" VERSION_GREATER_EQUAL 3.0.0)
+    message(STATUS "Using Emscripten version ${EMSCRIPTEN_VERSION}")
+else ()
+    message(STATUS "Emscripten is not defined or it is older than version 3.0.0. Current version: '${EMSCRIPTEN_VERSION}'")
+endif ()
+
+# Set Emscripten toolchain, if not defined
+if (NOT CMAKE_TOOLCHAIN_FILE AND DEFINED ENV{EMSDK})
+    message(STATUS "CMAKE_TOOLCHAIN_FILE not set. Using Emscripten toolchain from EMSDK")
+    set(CMAKE_TOOLCHAIN_FILE "$ENV{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake")
+elseif (NOT CMAKE_TOOLCHAIN_FILE)
+    message(STATUS "CMAKE_TOOLCHAIN_FILE not set and EMSDK not found. Building for native platform.")
+endif ()
+
+# Set "Release" as build type, if not defined
+if (NOT CMAKE_BUILD_TYPE)
+    message(STATUS "CMAKE_BUILD_TYPE not set. Using 'Release'")
+    set(CMAKE_BUILD_TYPE Release)
+endif (NOT CMAKE_BUILD_TYPE)
+
+# Set dist directory, if not defined
+if (NOT DIST_DIR)
+    message(STATUS "DIST_DIR not set. Using './dist'")
+    set(DIST_DIR ${CMAKE_BINARY_DIR}/../../../dist)
+endif (NOT DIST_DIR)
+
+set(LIBS_BUILD_FOLDER "../libs/build/")
+
+set(OPENCV_INCLUDE_DIRS
+    ${LIBS_BUILD_FOLDER}/../opencv/modules/calib3d/include/
+    ${LIBS_BUILD_FOLDER}/../opencv/modules/core/include/
+    ${LIBS_BUILD_FOLDER}/../opencv/modules/features2d/include/
+    ${LIBS_BUILD_FOLDER}/../opencv/modules/flann/include/
+    ${LIBS_BUILD_FOLDER}/../opencv/modules/highgui/include/
+    ${LIBS_BUILD_FOLDER}/../opencv/modules/imgcodecs/include/
+    ${LIBS_BUILD_FOLDER}/../opencv/modules/imgproc/include/
+    ${LIBS_BUILD_FOLDER}/../opencv/modules/objdetect/include/
+    ${LIBS_BUILD_FOLDER}/../opencv/modules/video/include/
+    ${LIBS_BUILD_FOLDER}/../opencv/modules/dnn/include/
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libs/opencv/modules/dnn/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libs/opencv/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libs/opencv/modules/core/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libs/opencv/modules/imgproc/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libs/opencv/modules/features2d/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libs/opencv/modules/calib3d/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libs/opencv/modules/flann/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libs/opencv/modules/photo/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libs/opencv/modules/video/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libs/opencv/modules/videoio/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libs/opencv/modules/highgui/include
+    ${LIBS_BUILD_FOLDER}/opencv/
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libs/opencv/build
+)
+
+set(CERES_INCLUDE_DIRS
+    ${LIBS_BUILD_FOLDER}/ceres-solver/include/
+)
+
+include_directories(${OPENCV_INCLUDE_DIRS})
+if(EMSCRIPTEN)
+    include_directories(${CERES_INCLUDE_DIRS})
+    include_directories(${LIBS_BUILD_FOLDER}/opengv/include/)
+endif()
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../libs/eigen)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../libs/Sophus)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+
+# Add the project source files conditionally
+if(EMSCRIPTEN)
+    file(GLOB_RECURSE SRC_FILES ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp)
+else()
+    file(GLOB_RECURSE SRC_FILES ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp)
+    list(REMOVE_ITEM SRC_FILES ${CMAKE_CURRENT_SOURCE_DIR}/bindings/embind.cpp)
+    # For native compilation, create a shared library instead of executable
+    add_library(${PROJECT_NAME} SHARED ${SRC_FILES})
+    set_target_properties(${PROJECT_NAME} PROPERTIES PREFIX "lib")
+    return() # Skip Emscripten-specific configuration
+endif()
+add_executable(${PROJECT_NAME} ${SRC_FILES})
+
+# Set output directory to current directory (where build folder is located)
+set_target_properties(${PROJECT_NAME} PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+
+# Point to third party libraries ( run src/libs/build.sh to compile these )
+file(GLOB LIB_OPENCV
+        "${LIBS_BUILD_FOLDER}/opencv/lib/libopencv_calib3d.a"
+        "${LIBS_BUILD_FOLDER}/opencv/lib/libopencv_core.a"
+        "${LIBS_BUILD_FOLDER}/opencv/lib/libopencv_features2d.a"
+        "${LIBS_BUILD_FOLDER}/opencv/lib/libopencv_flann.a"
+        "${LIBS_BUILD_FOLDER}/opencv/lib/libopencv_imgproc.a"
+        "${LIBS_BUILD_FOLDER}/opencv/lib/libopencv_objdetect.a"
+        "${LIBS_BUILD_FOLDER}/opencv/lib/libopencv_video.a")
+file(GLOB LIB_CERES
+        "${LIBS_BUILD_FOLDER}/ceres-solver/lib/libceres.a")
+file(GLOB LIB_OPENGV
+        "${LIBS_BUILD_FOLDER}/opengv/lib/libopengv.a")
+
+        # Hide warnings
+set_source_files_properties(${SRC_FILES} PROPERTIES COMPILE_FLAGS "-w")
+
+# Link third party libraries only for Emscripten
+if(EMSCRIPTEN)
+    target_link_libraries(${PROJECT_NAME}
+            ${LIB_OPENCV}
+            ${LIB_CERES}
+            ${LIB_OPENGV})
+else()
+    # For native compilation, use system libraries
+    find_package(OpenCV REQUIRED COMPONENTS core imgproc features2d calib3d highgui video videoio flann)
+    find_package(Eigen3 REQUIRED)
+    find_package(Ceres REQUIRED)
+    find_package(PkgConfig REQUIRED)
+    
+    target_link_libraries(${PROJECT_NAME} 
+        ${OpenCV_LIBS}
+        Eigen3::Eigen
+        Ceres::ceres)
+    
+    target_include_directories(${PROJECT_NAME} PRIVATE ${OpenCV_INCLUDE_DIRS})
+endif()
+
+# Specify compile arguments only for Emscripten
+# https://emscripten.org/docs/optimizing/Optimizing-Code.html
+# https://github.com/emscripten-core/emscripten/blob/main/src/settings.js
+if(EMSCRIPTEN)
+    if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+        message(STATUS "Compile in DEBUG mode")
+        set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "\
+          -s EXPORT_NAME='WebARCoreWASM' \
+          -s ENVIRONMENT=web,worker \
+          -s INITIAL_MEMORY=256MB \
+          -s ALLOW_MEMORY_GROWTH=0 \
+          -s ALLOW_TABLE_GROWTH=1 \
+          -s MODULARIZE=1 \
+          -s EXPORT_ES6=1 \
+          -s EXPORT_ALL=1 \
+          -s SINGLE_FILE=1 \
+          -s ASSERTIONS=1 \
+          -s DYLINK_DEBUG=1 \
+          -s EXPORTED_FUNCTIONS=['_malloc'] \
+          -s ERROR_ON_UNDEFINED_SYMBOLS=1 \
+          -s DISABLE_EXCEPTION_CATCHING=0 \
+          -s USE_ZLIB=1 \
+          -std=c++17 \
+          -msimd128 \
+          -O3 \
+          -Oz \
+          --extern-post-js ${CMAKE_SOURCE_DIR}/src/bindings/system.js \
+          --no-entry \
+          --no-check-features \
+          --profiling-funcs \
+          --bind")
+    else ()
+        message(STATUS "Compile in RELEASE mode")
+        set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "\
+            -s EXPORT_NAME='WebARCoreWASM' \
+            -s ENVIRONMENT=web,worker \
+            -s INITIAL_MEMORY=1024MB \
+            -s ALLOW_MEMORY_GROWTH=1 \
+            -s ALLOW_TABLE_GROWTH=1 \
+            -s MALLOC=emmalloc \
+            -s MODULARIZE=1 \
+            -s EXPORTED_FUNCTIONS=['_malloc'] \
+            -s EXPORT_ES6=1 \
+            -s EXPORT_ALL=1 \
+            -s SINGLE_FILE=1 \
+            -s ASSERTIONS=0 \
+            -s DYLINK_DEBUG=0 \
+            -s DISABLE_EXCEPTION_CATCHING=1 \
+            -s ERROR_ON_UNDEFINED_SYMBOLS=0 \
+            -s WASM_BIGINT=1 \
+            -s USE_ZLIB=1 \
+            -s WASM=1 \
+            -std=c++17 \
+            -msimd128 \
+            -O3 \
+            -flto \
+            -ffast-math \
+            -funroll-loops \
+            --extern-post-js ${CMAKE_CURRENT_SOURCE_DIR}/bindings/system.js \
+            --no-entry \
+            --bind")
+    endif ()
+else()
+    # Native compilation without Emscripten flags
+    message(STATUS "Native compilation mode")
+    set_target_properties(${PROJECT_NAME} PROPERTIES 
+        CXX_STANDARD 17
+        CXX_STANDARD_REQUIRED ON)
+endif()
+unset(CMAKE_BUILD_TYPE CACHE)
+
+# Install command will only be run if calling "emmake make install"
+install(TARGETS ${PROJECT_NAME} DESTINATION ${DIST_DIR})
+install(TARGETS ${PROJECT_NAME} DESTINATION ${CMAKE_BINARY_DIR}/../../../examples/public/assets)

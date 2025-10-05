@@ -1,5 +1,5 @@
 #include "multi_view_geometry.hpp"
-#include "ceres_parametrization.hpp"
+#include "../optimization/ceres_parametrization.hpp"
 #include <opengv/types.hpp>
 #include <opengv/triangulation/methods.hpp>
 #include <opengv/sac/Ransac.hpp>
@@ -62,12 +62,9 @@ bool MultiViewGeometry::p3pRansac(
     opengv::sac::Lmeds<opengv::sac_problems::absolute_pose::AbsolutePoseSacProblem> ransac;
 //    opengv::sac::Ransac<opengv::sac_problems::absolute_pose::AbsolutePoseSacProblem> ransac;
 
-    std::shared_ptr<opengv::sac_problems::absolute_pose::AbsolutePoseSacProblem> absposeproblem_ptr(
-            new opengv::sac_problems::absolute_pose::AbsolutePoseSacProblem(
+    auto absposeproblem_ptr = std::make_shared<opengv::sac_problems::absolute_pose::AbsolutePoseSacProblem>(
                     adapter,
-                    opengv::sac_problems::absolute_pose::AbsolutePoseSacProblem::KNEIP, // KNEIP, GAO or EPNP
-                    doRandom)
-    );
+                    opengv::sac_problems::absolute_pose::AbsolutePoseSacProblem::KNEIP);
 
     float focal = fx + fy;
     focal /= 2.;
@@ -92,19 +89,19 @@ bool MultiViewGeometry::p3pRansac(
     }
 
     // Optimize the computed pose with inliers only
-    opengv::transformation_t T_opt;
+    opengv::transformation_t T_opt = opengv::transformation_t::Identity();
 
     if (optimize)
     {
         ransac.sac_model_->optimizeModelCoefficients(ransac.inliers_, ransac.model_coefficients_, T_opt);
 
-        Twc.translation() = T_opt.rightCols(1);
-        Twc.setRotationMatrix(T_opt.leftCols(3));
+        Twc.translation() = T_opt.block<3,1>(0,3);
+        Twc.setRotationMatrix(T_opt.block<3,3>(0,0));
     }
     else
     {
-        Twc.translation() = ransac.model_coefficients_.rightCols(1);
-        Twc.setRotationMatrix(ransac.model_coefficients_.leftCols(3));
+        Twc.translation() = ransac.model_coefficients_.block<3,1>(0,3);
+        Twc.setRotationMatrix(ransac.model_coefficients_.block<3,3>(0,0));
     }
 
     size_t k = 0;
@@ -263,13 +260,9 @@ bool MultiViewGeometry::compute5ptEssentialMatrix(
 
     opengv::sac::Ransac<opengv::sac_problems::relative_pose::CentralRelativePoseSacProblem> ransac;
 
-    std::shared_ptr<opengv::sac_problems::relative_pose::CentralRelativePoseSacProblem> relposeproblem_ptr(
-            new opengv::sac_problems::relative_pose::CentralRelativePoseSacProblem(
+    auto relposeproblem_ptr = std::make_shared<opengv::sac_problems::relative_pose::CentralRelativePoseSacProblem>(
                     adapter,
-                    opengv::sac_problems::relative_pose::CentralRelativePoseSacProblem::NISTER,
-                    doRandom
-            )
-    );
+                    opengv::sac_problems::relative_pose::CentralRelativePoseSacProblem::NISTER);
 
     float focal = fx + fy;
     focal /= 2.;
@@ -286,18 +279,18 @@ bool MultiViewGeometry::compute5ptEssentialMatrix(
         return false;
     }
 
-    twc = ransac.model_coefficients_.rightCols(1);
-    Rwc = ransac.model_coefficients_.leftCols(3);
+    twc = ransac.model_coefficients_.block<3,1>(0,3);
+    Rwc = ransac.model_coefficients_.block<3,3>(0,0);
 
     // Optimize the computed pose with inliers only
-    opengv::transformation_t T_opt;
+    opengv::transformation_t T_opt = opengv::transformation_t::Identity();
 
     if (optimize)
     {
         ransac.sac_model_->optimizeModelCoefficients(ransac.inliers_, ransac.model_coefficients_, T_opt);
 
-        Rwc = T_opt.leftCols(3);
-        twc = T_opt.rightCols(1);
+        Rwc = T_opt.block<3,3>(0,0);
+        twc = T_opt.block<3,1>(0,3);
     }
 
     size_t k = 0;

@@ -1,5 +1,5 @@
 #include <opencv2/highgui.hpp>
-#include "multi_view_geometry.hpp"
+#include "../vision/multi_view_geometry.hpp"
 #include "map_manager.hpp"
 
 constexpr size_t INITIAL_POINT_CLOUD_CAPACITY = 10000; // Reduced from 1e5
