@@ -21,10 +21,14 @@ const ensureSelfSignedCert = () => {
     if(!fs.existsSync(keyPath) || !fs.existsSync(certPath)){
         console.log('Generating self-signed SSL certificate...');
         const attrs = [{ name: 'commonName', value: '0.0.0.0' }];
-        const pems = selfsigned.generate(attrs, { days: 365 });
+        const pems = selfsigned.generate(attrs, { 
+            days: 365,
+            keySize: 2048,
+            algorithm: 'sha256'
+        });
         fs.mkdirSync(certsDir, { recursive: true });
         fs.writeFileSync(certPath, pems.cert);
-        fs.writeFileSync(pems.private);
+        fs.writeFileSync(keyPath, pems.private);
     }
 };
 
@@ -68,12 +72,12 @@ app.get('*', (req, res) => {
     }
 });
 
+ensureSelfSignedCert();
+
 const options = {
     key: fs.readFileSync(keyPath),
     cert: fs.readFileSync(certPath)
 };
-
-ensureSelfSignedCert();
 
 https.createServer(options, app).listen({ host: '0.0.0.0', port: 8000 }, () => {
     console.log('🚀 HTTPS server at https://0.0.0.0:8000');
