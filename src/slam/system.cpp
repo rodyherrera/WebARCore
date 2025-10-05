@@ -40,6 +40,26 @@ void System::reset(){
     mapManager_->reset();
     state_->reset();
     prevTranslation_.setZero();
+    
+    if(poseFilter_){
+        poseFilter_->reset();
+    }
+}
+
+void System::enablePoseSmoothing(bool enable, double minCutoffPos, double minCutoffRot, double beta){
+    poseSmoothingEnabled_ = enable;
+    if(enable){
+        poseFilter_ = std::make_unique<OneEuroFilterSE3>(minCutoffPos, minCutoffRot, beta);
+        if(state_->debug_){
+            std::cout << "- [System]: One Euro Filter enabled (minCutoffPos=" << minCutoffPos 
+                      << ", minCutoffRot=" << minCutoffRot << ", beta=" << beta << ")\n";
+        }
+    }else{
+        poseFilter_.reset();
+        if(state_->debug_){
+            std::cout << "- [System]: One Euro Filter disabled\n";
+        }
+    }
 }
 
 int System::findCameraPoseWithIMU(int imageRGBADataPtr, int imuDataPtr, int posePtr){
@@ -69,6 +89,12 @@ int System::findCameraPoseWithIMU(int imageRGBADataPtr, int imuDataPtr, int pose
         Twc.translation() = currTranslation_;
     }
     
+    // Apply One Euro Filter if enabled
+    if(poseSmoothingEnabled_ && poseFilter_){
+        double timestamp = static_cast<double>(getTimestamp()) / 1000.0; // Convert to seconds
+        poseFilter_->filter(Twc, timestamp);
+    }
+    
     // Guardar traslación actual para próxima iteración
     currTranslation_ = Twc.translation();
 
@@ -85,7 +111,16 @@ int System::findCameraPose(int imageRGBADataPtr, int posePtr){
     cv::cvtColor(imageRGBA, gray, cv::COLOR_RGBA2GRAY);
 
     int status = processCameraPose(gray, getTimestamp());
-    Utils::toPoseArray(currFrame_->getTwc(), poseData);
+    
+    Sophus::SE3d Twc = currFrame_->getTwc();
+    
+    // Apply One Euro Filter if enabled
+    if(poseSmoothingEnabled_ && poseFilter_ && status == 1){
+        double timestamp = static_cast<double>(getTimestamp()) / 1000.0; // Convert to seconds
+        poseFilter_->filter(Twc, timestamp);
+    }
+    
+    Utils::toPoseArray(Twc, poseData);
     return status;
 }
 

@@ -36,6 +36,9 @@ const main = () => {
         const webarcore = await WebARCore.Initialize(canvas.width, canvas.height);
         const view = new ARPoseRendererView(viewContainer, canvas.width, canvas.height);
         
+        // Enable One Euro Filter for smooth tracking
+        webarcore.enablePoseSmoothing(true, 1.0, 1.5, 0.007);
+        
         Stats.addTimer('total');
         Stats.addTimer('video');
         Stats.addTimer('slam');
@@ -45,6 +48,15 @@ const main = () => {
       
         document.body.appendChild(Stats.uiElement);
         document.body.addEventListener('click', () => webarcore.reset(), false);
+        
+        // Toggle pose smoothing with 'F' key
+        document.addEventListener('keydown', (e) => {
+            if(e.key === 'f' || e.key === 'F'){
+                const enabled = !webarcore.isPoseSmoothingEnabled();
+                webarcore.enablePoseSmoothing(enabled);
+                console.log(`Pose smoothing: ${enabled ? 'ENABLED' : 'DISABLED'}`);
+            }
+        }, false);
         
         runPerFrameLoop(() => {
             Stats.startFrame();

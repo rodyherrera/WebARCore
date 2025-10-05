@@ -15,6 +15,7 @@
 #include "../vision/camera_calibration.hpp"
 #include "../vision/feature_extractor.hpp"
 #include "../vision/feature_tracker.hpp"
+#include "../core/one_euro_filter.hpp"
 #include "mapper.hpp"
 #include "map_manager.hpp"
 #include "visual_frontend.hpp"
@@ -31,6 +32,9 @@ public:
     void configure(int imageWidth, int imageHeight, double fx, double fy, double cx, double cy, double k1, double k2, double p1, double p2);
 
     void reset();
+    
+    void enablePoseSmoothing(bool enable, double minCutoffPos = 1.0, double minCutoffRot = 1.5, double beta = 0.007);
+    bool isPoseSmoothingEnabled() const { return poseSmoothingEnabled_; }
 
     int findCameraPoseWithIMU(int imageRGBADataPtr, int imuDataPtr, int posePtr);
     cv::Mat fastPlaneDetection(const std::vector<Eigen::Vector3d>& points, const Sophus::SE3d& Twc, int numIterations);
@@ -67,4 +71,8 @@ private:
     double lastFrameDuration_ = 0.0;
     int frameCount_ = 0;
     std::chrono::high_resolution_clock::time_point fpsStartTime_;
+    
+    // One Euro Filter for pose smoothing
+    bool poseSmoothingEnabled_ = false;
+    std::unique_ptr<OneEuroFilterSE3> poseFilter_;
 };

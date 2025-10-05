@@ -35,6 +35,11 @@ const main = () => {
         const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
         const webarcore = await WebARCore.Initialize(canvas.width, canvas.height);
         const view = new ARGroundProjectorView(viewContainer, canvas.width, canvas.height);
+        
+        // Enable One Euro Filter optimized for IMU fusion
+        // IMU provides stable rotation, so we mainly smooth position
+        webarcore.enablePoseSmoothing(true, 0.8, 2.0, 0.007);
+        
         Stats.addTimer('total');
         Stats.addTimer('video');
         Stats.addTimer('slam');
@@ -43,6 +48,15 @@ const main = () => {
         document.body.appendChild(Stats.uiElement);
         document.body.addEventListener('click', (e) => view.addObjectAt(e.clientX, e.clientY), false);
         document.body.addEventListener('dblclick', (e) => webarcore.reset(), false);
+        
+        // Toggle pose smoothing with 'F' key
+        document.addEventListener('keydown', (e) => {
+            if(e.key === 'f' || e.key === 'F'){
+                const enabled = !webarcore.isPoseSmoothingEnabled();
+                webarcore.enablePoseSmoothing(enabled, 0.8, 2.0, 0.007);
+                console.log(`Pose smoothing: ${enabled ? 'ENABLED' : 'DISABLED'}`);
+            }
+        }, false);
         runPerFrameLoop(() => {
             Stats.startFrame();
             Stats.startTimer('total');

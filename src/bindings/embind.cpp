@@ -15,5 +15,7 @@ EMSCRIPTEN_BINDINGS(Module)
         .function("findCameraPoseWithIMU", &System::findCameraPoseWithIMU, allow_raw_pointers())
         .function("findCameraPose", &System::findCameraPose, allow_raw_pointers())
         .function("findPlane", &System::findPlane)
-        .function("getFramePoints", &System::getFramePoints);
+        .function("getFramePoints", &System::getFramePoints)
+        .function("enablePoseSmoothing", &System::enablePoseSmoothing)
+        .function("isPoseSmoothingEnabled", &System::isPoseSmoothingEnabled);
 }

@@ -194,6 +194,25 @@ class WebARCore{
     reset(){
         this.system.reset();
     }
+
+    /**
+     * Enable/disable One Euro Filter for pose smoothing
+     * @param {boolean} enable - Enable or disable the filter
+     * @param {number} minCutoffPos - Minimum cutoff frequency for position (default: 1.0, lower = smoother)
+     * @param {number} minCutoffRot - Minimum cutoff frequency for rotation (default: 1.5, lower = smoother)
+     * @param {number} beta - Speed coefficient for adaptivity (default: 0.007, higher = more reactive)
+     */
+    enablePoseSmoothing(enable, minCutoffPos = 1.0, minCutoffRot = 1.5, beta = 0.007){
+        this.system.enablePoseSmoothing(enable, minCutoffPos, minCutoffRot, beta);
+    }
+
+    /**
+     * Check if pose smoothing is enabled
+     * @returns {boolean}
+     */
+    isPoseSmoothingEnabled(){
+        return this.system.isPoseSmoothingEnabled();
+    }
 }
 
 export { WebARCore };
