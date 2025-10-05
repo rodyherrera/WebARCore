@@ -39,6 +39,15 @@ const main = () => {
         // Enable One Euro Filter for smooth tracking
         webarcore.enablePoseSmoothing(true, 1.0, 1.5, 0.007);
         
+        // Load the GLB model automatically
+        try {
+            console.log('Loading GLB model: low_poly_person.glb');
+            await view.loadGLBModelFromURL('../assets/models/low_poly_person.glb');
+            console.log('Model loaded successfully!');
+        } catch(error) {
+            console.warn('Failed to load GLB model, using default:', error);
+        }
+        
         Stats.addTimer('total');
         Stats.addTimer('video');
         Stats.addTimer('slam');
