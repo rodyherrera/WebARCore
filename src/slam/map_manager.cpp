@@ -2,9 +2,8 @@
 #include "../vision/multi_view_geometry.hpp"
 #include "map_manager.hpp"
 
-constexpr size_t INITIAL_POINT_CLOUD_CAPACITY = 10000; // Reduced from 1e5
+constexpr size_t INITIAL_POINT_CLOUD_CAPACITY = 10000;
 constexpr unsigned char OBSERVED_POINT_COLOR = 255;
-constexpr unsigned char DEFAULT_POINT_COLOR = 200;
 
 MapManager::MapManager(std::shared_ptr<State> state, std::shared_ptr<Frame> frame, std::shared_ptr<FeatureExtractor> featureExtractor)
     : numMapPointIds_(0), 

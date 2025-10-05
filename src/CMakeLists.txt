@@ -74,10 +74,13 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../libs/Sophus)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 # Add the project source files conditionally
+file(GLOB_RECURSE SRC_FILES ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp)
+
 if(EMSCRIPTEN)
-    file(GLOB_RECURSE SRC_FILES ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp)
+    # For Emscripten: exclude embind_mock.cpp (use real embind.cpp)
+    list(REMOVE_ITEM SRC_FILES ${CMAKE_CURRENT_SOURCE_DIR}/bindings/embind_mock.cpp)
 else()
-    file(GLOB_RECURSE SRC_FILES ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp)
+    # For native: exclude embind.cpp (use embind_mock.cpp)
     list(REMOVE_ITEM SRC_FILES ${CMAKE_CURRENT_SOURCE_DIR}/bindings/embind.cpp)
     # For native compilation, create a shared library instead of executable
     add_library(${PROJECT_NAME} SHARED ${SRC_FILES})

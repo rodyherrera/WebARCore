@@ -9,6 +9,7 @@
 #include <opengv/relative_pose/CentralRelativeAdapter.hpp>
 #include <opengv/sac_problems/relative_pose/CentralRelativePoseSacProblem.hpp>
 #include <thread>
+#include <memory>
 
 Eigen::Vector3d MultiViewGeometry::triangulate(const Sophus::SE3d &Tlr, const Eigen::Vector3d &bvl, const Eigen::Vector3d &bvr)
 {
@@ -144,21 +145,24 @@ bool MultiViewGeometry::ceresPnP(
 
     double chi2ThresholdSqrt = std::sqrt(chi2th);
 
-    ceres::LossFunctionWrapper *lossFunction;
-    lossFunction = new ceres::LossFunctionWrapper(new ceres::HuberLoss(chi2ThresholdSqrt), ceres::TAKE_OWNERSHIP);
+    // Ceres takes ownership of these pointers via TAKE_OWNERSHIP flag
+    ceres::LossFunctionWrapper *lossFunction = new ceres::LossFunctionWrapper(
+        new ceres::HuberLoss(chi2ThresholdSqrt), 
+        ceres::TAKE_OWNERSHIP);
 
     if (!useRobust)
     {
-        lossFunction->Reset(NULL, ceres::TAKE_OWNERSHIP);
+        lossFunction->Reset(nullptr, ceres::TAKE_OWNERSHIP);
     }
 
     size_t numKeyPoints = unKeypoints.size();
 
-    ceres::LocalParameterization *local_parameterization = new SE3Parameterization();
+    // Use smart pointer for automatic memory management
+    auto local_parameterization = std::make_unique<SE3Parameterization>();
 
     PoseParametersBlock posepar = PoseParametersBlock(0, Twc);
 
-    problem.AddParameterBlock(posepar.values(), 7, local_parameterization);
+    problem.AddParameterBlock(posepar.values(), 7, local_parameterization.release());
 
     std::vector<DirectSE3::ReprojectionErrorSE3 *> verrors_;
     std::vector<ceres::ResidualBlockId> vrids_;

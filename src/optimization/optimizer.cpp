@@ -1,6 +1,7 @@
 #include "optimizer.hpp"
 #include "ceres_parametrization.hpp"
 #include <thread>
+#include <memory>
 
 void Optimizer::localBA(Frame &newFrame)
 {
@@ -19,15 +20,18 @@ void Optimizer::localBA(Frame &newFrame)
     // ================================================================== 1. Setup BA Problem
 
     ceres::Problem problem;
-    ceres::LossFunctionWrapper *lossFunction;
-    lossFunction = new ceres::LossFunctionWrapper(new ceres::HuberLoss(std::sqrt(chi2errThreshold)), ceres::TAKE_OWNERSHIP);
+    // Ceres takes ownership of these pointers via TAKE_OWNERSHIP flag
+    ceres::LossFunctionWrapper *lossFunction = new ceres::LossFunctionWrapper(
+        new ceres::HuberLoss(std::sqrt(chi2errThreshold)), 
+        ceres::TAKE_OWNERSHIP);
 
     if (!useRobustCost)
     {
         lossFunction->Reset(nullptr, ceres::TAKE_OWNERSHIP);
     }
 
-    auto ordering = new ceres::ParameterBlockOrdering;
+    // Use smart pointer for automatic memory management
+    auto ordering = std::make_unique<ceres::ParameterBlockOrdering>();
 
     std::unordered_map<int, PoseParametersBlock> map_id_posespar_;
     std::unordered_map<int, PointXYZParametersBlock> map_id_pointspar_;
@@ -86,9 +90,10 @@ void Optimizer::localBA(Frame &newFrame)
         // Add every keyframe to BA problem
         map_id_posespar_.emplace(keyframeId, PoseParametersBlock(keyframeId, pkf->getTwc()));
 
-        ceres::LocalParameterization *local_parameterization = new SE3Parameterization();
+        // Use smart pointer for automatic memory management
+        auto local_parameterization = std::make_unique<SE3Parameterization>();
 
-        problem.AddParameterBlock(map_id_posespar_.at(keyframeId).values(), 7, local_parameterization);
+        problem.AddParameterBlock(map_id_posespar_.at(keyframeId).values(), 7, local_parameterization.release());
         ordering->AddElementToGroup(map_id_posespar_.at(keyframeId).values(), 1);
 
         // For those to optimize, get their 3D map points for the others, set them as constant
@@ -162,9 +167,10 @@ void Optimizer::localBA(Frame &newFrame)
                 map_local_pkfs.emplace(kfid, pkf);
                 map_id_posespar_.emplace(kfid, PoseParametersBlock(kfid, pkf->getTwc()));
 
-                ceres::LocalParameterization *local_parameterization = new SE3Parameterization();
+                // Use smart pointer for automatic memory management
+                auto local_parameterization = std::make_unique<SE3Parameterization>();
 
-                problem.AddParameterBlock(map_id_posespar_.at(kfid).values(), 7, local_parameterization);
+                problem.AddParameterBlock(map_id_posespar_.at(kfid).values(), 7, local_parameterization.release());
                 ordering->AddElementToGroup(map_id_posespar_.at(kfid).values(), 1);
 
                 set_cstkfids.insert(kfid);
@@ -250,7 +256,7 @@ void Optimizer::localBA(Frame &newFrame)
     // ================================================================== 2. Solve BA Problem
 
     ceres::Solver::Options options;
-    options.linear_solver_ordering.reset(ordering);
+    options.linear_solver_ordering.reset(ordering.release());
     options.linear_solver_type = ceres::SPARSE_SCHUR;
     options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;
     options.num_threads = std::thread::hardware_concurrency();
