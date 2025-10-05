@@ -51,24 +51,29 @@ int System::findCameraPoseWithIMU(int imageRGBADataPtr, int imuDataPtr, int pose
     cv::Mat gray;
     cv::cvtColor(imageRGBA, gray, cv::COLOR_RGBA2GRAY);
 
+    // Obtener rotación del IMU (quaternion w,x,y,z)
     Eigen::Quaterniond qimu(imuData[0], -imuData[1], imuData[2], imuData[3]);
     Eigen::Matrix3d Rwc = qimu.toRotationMatrix().inverse();
-    Sophus::SE3d Twc(Rwc, Eigen::Vector3d::Zero());
-
-    int motionSampleSize = 7;
+    
+    // Procesar el frame con Visual SLAM
     int status = processCameraPose(gray, getTimestamp());
 
-    if(status == 1){
-        Eigen::Vector3d t = currFrame_->getTwc().translation();
-        currTranslation_ += t - prevTranslation_;
-        prevTranslation_ = t;
-    }else{
-        prevTranslation_.setZero();
-    }
+    // Crear pose final fusionando IMU (rotación) + Visual SLAM (traslación)
+    Sophus::SE3d Twc(Rwc, Eigen::Vector3d::Zero());
 
-    Twc.translation() = currTranslation_;
+    if(status == 1){
+        // Usar la traslación absoluta del Visual SLAM
+        Twc.translation() = currFrame_->getTwc().translation();
+    }else{
+        // Si no hay tracking, mantener la última traslación conocida
+        Twc.translation() = currTranslation_;
+    }
+    
+    // Guardar traslación actual para próxima iteración
+    currTranslation_ = Twc.translation();
+
     Utils::toPoseArray(Twc, poseData);
-    return 1;
+    return status;
 }
 
 int System::findCameraPose(int imageRGBADataPtr, int posePtr){
